@@ -26,11 +26,18 @@ sleep 1
 # Виртуальный «динамик»: сюда Zoom выводит звук митинга, его же и записываем.
 pactl load-module module-null-sink sink_name=vspeaker \
     sink_properties=device.description=vspeaker 2>/dev/null || true
-# Виртуальный «микрофон» (на будущее — если бот должен что-то говорить).
+# Виртуальный «микрофон»: сюда бот проигрывает музыку/звук (music_daemon.py).
 pactl load-module module-null-sink sink_name=vmic \
     sink_properties=device.description=vmic 2>/dev/null || true
+# ВАЖНО: голый monitor-источник Zoom НЕ показывает как микрофон. Оборачиваем
+# vmic.monitor в полноценный source «BotMic» через remap — его Zoom видит как
+# обычный микрофон (проверено вживую на Zoom 7.1.0).
+pactl load-module module-remap-source master=vmic.monitor source_name=BotMic \
+    source_properties="device.description='BotMic'" 2>/dev/null || true
 pactl set-default-sink vspeaker 2>/dev/null || true
-pactl set-default-source vspeaker.monitor 2>/dev/null || true
+# Микрофон Zoom по умолчанию -> BotMic (музыка бота). Запись/превью/VAD берут
+# vspeaker.monitor явно, поэтому им это не мешает.
+pactl set-default-source BotMic 2>/dev/null || true
 
 trap "pkill -TERM zoom 2>/dev/null || true; kill %1 2>/dev/null || true" EXIT
 
