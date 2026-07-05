@@ -1,0 +1,64 @@
+:root {
+  --bg: #0f1220;
+  --card: #1a1e33;
+  --text: #e7e9f3;
+  --muted: #9aa0bd;
+  --accent: #4f7cff;
+  --ok: #2ecc71;
+  --err: #e74c3c;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid #2a2f4a;
+}
+
+header h1 { font-size: 1.25rem; margin: 0; }
+
+main { padding: 1.5rem; max-width: 720px; margin: 0 auto; }
+
+.card {
+  background: var(--card);
+  border: 1px solid #2a2f4a;
+  border-radius: 12px;
+  padding: 1.5rem;
+}
+
+.card h2 { margin-top: 0; }
+.card p { color: var(--muted); }
+
+.roadmap { list-style: none; padding: 0; margin: 1rem 0 0; }
+.roadmap li {
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  margin-bottom: 0.4rem;
+  background: #12162a;
+  color: var(--muted);
+}
+.roadmap li.done {
+  color: var(--text);
+  border-left: 3px solid var(--ok);
+}
+
+.badge {
+  font-size: 0.85rem;
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  background: #2a2f4a;
+  color: var(--muted);
+}
+.badge.ok { background: rgba(46,204,113,.15); color: var(--ok); }
+.badge.err { background: rgba(231,76,60,.15); color: var(--err); }

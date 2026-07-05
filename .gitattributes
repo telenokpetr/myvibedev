@@ -1,0 +1,10 @@
+# По умолчанию — авто-нормализация переводов строк.
+* text=auto
+
+# Файлы, исполняемые в Linux-контейнерах, всегда с LF.
+*.sh text eol=lf
+entrypoint.sh text eol=lf
+Dockerfile text eol=lf
+*.py text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf

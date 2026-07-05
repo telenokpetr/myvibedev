@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Zoom Bot Console</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>🎥 Zoom Bot Console</h1>
+    <span class="badge" id="status">проверка…</span>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>Каркас запущен</h2>
+      <p>Это этап&nbsp;1 — базовый скелет. Дальше появятся расписание лекций,
+         интеграция с&nbsp;Zoom, планировщик и&nbsp;живой просмотр.</p>
+      <ul class="roadmap">
+        <li class="done">1. Каркас + Docker Compose</li>
+        <li>2. Веб-интерфейс расписания лекций</li>
+        <li>3. Интеграция с Zoom REST API</li>
+        <li>4. Планировщик запуска по времени</li>
+        <li>5. Bot-worker: Zoom-клиент на Ubuntu + Xvfb</li>
+        <li>6. Чат-модерация (AT-SPI → OCR)</li>
+        <li>7. Живой просмотр в вебе (WebSocket)</li>
+      </ul>
+    </section>
+  </main>
+
+  <script>
+    async function refresh() {
+      const el = document.getElementById('status');
+      try {
+        const r = await fetch('/health');
+        const j = await r.json();
+        const ok = r.status === 200;
+        el.textContent = ok ? 'всё работает' : 'есть проблемы';
+        el.className = 'badge ' + (ok ? 'ok' : 'err');
+        el.title = `db: ${j.db} · redis: ${j.redis}`;
+      } catch (e) {
+        el.textContent = 'нет связи';
+        el.className = 'badge err';
+      }
+    }
+    refresh();
+    setInterval(refresh, 5000);
+  </script>
+</body>
+</html>
