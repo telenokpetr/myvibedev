@@ -52,6 +52,7 @@ services:
       ZOOM_BOT_NAME: "Модератор"
       RECORDINGS_DIR: "/data/recordings"
       SCREENSHOTS_DIR: "/data/screenshots"
+      WEB_CALLBACK_URL: "http://web:8000"
     ports:
       - "9000:9000"   # управляющий API bot-worker (для тестов/отладки)
     depends_on:

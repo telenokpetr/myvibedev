@@ -7,7 +7,9 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 from app import gui
+from app.chatreader import ChatMessage
 from app.config import config
+from app.moderation import moderator
 from app.preview import preview
 from app.recording import recording
 from app.session import session
@@ -31,7 +33,13 @@ class JoinRequest(BaseModel):
     passcode: str | None = None
     host_key: str | None = None
     record: bool = False
+    moderate: bool = False
     title: str | None = None
+
+
+class ChatTestRequest(BaseModel):
+    sender: str = "Тест"
+    text: str
 
 
 class RecordStartRequest(BaseModel):
@@ -51,7 +59,8 @@ def health():
 @app.post("/session/join")
 def join(req: JoinRequest):
     try:
-        session.join(req.join_url, req.passcode, req.host_key, req.record, req.title)
+        session.join(req.join_url, req.passcode, req.host_key, req.record,
+                     req.title, req.moderate)
     except RuntimeError as exc:
         return JSONResponse({"error": str(exc)}, status_code=409)
     return session.status()
@@ -96,6 +105,20 @@ def recording_status():
 @app.post("/moderation/mute-all")
 def mute_all():
     return {"ok": gui.mute_all()}
+
+
+@app.get("/moderation/status")
+def moderation_status():
+    return moderator.status()
+
+
+@app.post("/moderation/test")
+def moderation_test(req: ChatTestRequest):
+    """Прогнать сообщение через правила модерации (для проверки без митинга)."""
+    ev = moderator.process(ChatMessage(sender=req.sender, text=req.text))
+    if ev is None:
+        return {"detected": False}
+    return {"detected": True, "event": ev.__dict__}
 
 
 @app.get("/screenshot")

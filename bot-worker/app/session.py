@@ -6,6 +6,7 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 
 from app import gui, zoom
+from app.moderation import moderator
 from app.recorder import recorder
 from app.recording import recording
 
@@ -44,7 +45,7 @@ class SessionManager:
         return d
 
     def join(self, join_url: str, passcode: str | None, host_key: str | None,
-             record: bool, title: str | None) -> None:
+             record: bool, title: str | None, moderate: bool = False) -> None:
         with self._lock:
             if self.busy:
                 raise RuntimeError("Уже идёт активная сессия")
@@ -56,11 +57,11 @@ class SessionManager:
         # Всю долгую работу — в фоне, чтобы API отвечал сразу.
         threading.Thread(
             target=self._run_session,
-            args=(join_url, passcode, host_key, record, title),
+            args=(join_url, passcode, host_key, record, title, moderate),
             daemon=True,
         ).start()
 
-    def _run_session(self, join_url, passcode, host_key, record, title) -> None:
+    def _run_session(self, join_url, passcode, host_key, record, title, moderate) -> None:
         try:
             self._proc = zoom.launch(join_url, passcode)
             self._log("Zoom-клиент запущен, жду загрузки")
@@ -80,6 +81,10 @@ class SessionManager:
                           "не удалось забрать хост (нужна калибровка UI)")
                 self._state.status = "live"
 
+            if moderate:
+                moderator.start()
+                self._log("модерация чата включена")
+
             if record:
                 res = recording.start("local", title or "event")
                 self._state.recording_path = res.get("path")
@@ -94,6 +99,7 @@ class SessionManager:
     def leave(self) -> None:
         with self._lock:
             self._log("выхожу из конференции")
+            moderator.stop()
             if recording.status()["active"]:
                 res = recording.stop()
                 self._state.recording_path = res.get("path")

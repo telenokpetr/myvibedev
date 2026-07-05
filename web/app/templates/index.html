@@ -104,10 +104,29 @@
         </table>
       </div>
     </section>
+    <section class="card">
+      <h2>Модерация чата</h2>
+      <p class="hint">Спам (флуд / повторы) и нецензурная лексика. Проверь правила на тестовом сообщении — движок работает и без митинга.</p>
+      <div class="control-row">
+        <input id="mod-sender" placeholder="Автор" style="max-width:150px">
+        <input id="mod-text" placeholder="Текст сообщения" style="flex:1;min-width:200px">
+        <button id="mod-test">Проверить</button>
+        <span id="mod-test-res" class="msg"></span>
+      </div>
+      <div class="table-wrap">
+        <table id="mod-events">
+          <thead>
+            <tr><th>Время</th><th>Автор</th><th>Сообщение</th><th>Причина</th><th>Действие</th></tr>
+          </thead>
+          <tbody><tr><td colspan="5" class="muted">пока нет событий</td></tr></tbody>
+        </table>
+      </div>
+    </section>
   </main>
 
   <script src="/static/vendor/jsmpeg.min.js"></script>
   <script src="/static/app.js"></script>
   <script src="/static/preview.js"></script>
+  <script src="/static/moderation.js"></script>
 </body>
 </html>

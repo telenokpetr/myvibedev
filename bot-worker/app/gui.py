@@ -104,6 +104,23 @@ def mute_all() -> bool:
     return False
 
 
+def mute_participant(name: str) -> bool:
+    """Замьютить конкретного участника (модерация).
+
+    TODO(калибровка): Participants → найти участника → Mute. Точные клики — по
+    скриншотам живого митинга.
+    """
+    return False
+
+
+def delete_chat_message(sender: str, text: str) -> bool:
+    """Удалить сообщение в чате (host-контрол).
+
+    TODO(калибровка): навести на сообщение → ⋯ → Delete.
+    """
+    return False
+
+
 def start_cloud_recording() -> bool:
     """Запустить облачную запись Zoom (нужны host-права и платный аккаунт).
 

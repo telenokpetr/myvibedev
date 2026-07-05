@@ -3,17 +3,17 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import websockets
-from fastapi import FastAPI, Request, WebSocket
+from fastapi import Body, FastAPI, Request, WebSocket
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from app import bot_client
 from app import models  # noqa: F401  (регистрирует таблицы в metadata)
 from app import scheduler
 from app.config import settings
-from app.database import Base, engine
+from app.database import Base, SessionLocal, engine
 from app.routers import events
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -89,6 +89,56 @@ def bot_recording_action(action: str):
 @app.post("/api/bot/mute-all")
 def bot_mute_all():
     return bot_client.mute_all() or {"error": "bot-worker недоступен"}
+
+
+@app.post("/api/bot/moderation/test")
+def bot_moderation_test(payload: dict = Body(...)):
+    sender = payload.get("sender") or "Тест"
+    text_ = payload.get("text") or ""
+    return bot_client.moderation_test(sender, text_) or {"error": "bot-worker недоступен"}
+
+
+@app.post("/api/internal/moderation")
+def internal_moderation(payload: dict = Body(...)):
+    """Приём событий модерации от bot-worker (по внутреннему токену)."""
+    if payload.get("token") != settings.internal_api_token:
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    db = SessionLocal()
+    try:
+        ev = models.ModerationEvent(
+            sender=payload.get("sender", "?"),
+            text=payload.get("text", ""),
+            category=payload.get("category", "spam"),
+            reason=payload.get("reason"),
+            action=payload.get("action", "flagged"),
+        )
+        db.add(ev)
+        db.commit()
+        return {"ok": True}
+    finally:
+        db.close()
+
+
+@app.get("/api/moderation/events")
+def moderation_events(limit: int = 50):
+    db = SessionLocal()
+    try:
+        stmt = (
+            select(models.ModerationEvent)
+            .order_by(models.ModerationEvent.created_at.desc())
+            .limit(min(limit, 200))
+        )
+        rows = list(db.scalars(stmt))
+        return [
+            {
+                "id": r.id, "sender": r.sender, "text": r.text,
+                "category": r.category, "reason": r.reason,
+                "action": r.action, "created_at": r.created_at.isoformat(),
+            }
+            for r in rows
+        ]
+    finally:
+        db.close()
 
 
 @app.websocket("/api/preview")

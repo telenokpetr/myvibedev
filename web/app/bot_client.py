@@ -18,6 +18,7 @@ def join(event) -> str:
         "passcode": event.passcode,
         "host_key": event.host_key,
         "record": event.record,
+        "moderate": event.moderate,
         "title": event.title,
     }
     try:
@@ -75,4 +76,15 @@ def mute_all() -> dict | None:
         return r.json()
     except Exception as exc:  # noqa: BLE001
         log.warning("mute_all failed: %s", exc)
+        return None
+
+
+def moderation_test(sender: str, text: str) -> dict | None:
+    try:
+        r = httpx.post(f"{BASE}/moderation/test",
+                       json={"sender": sender, "text": text}, timeout=15)
+        r.raise_for_status()
+        return r.json()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("moderation_test failed: %s", exc)
         return None
