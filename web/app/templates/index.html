@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Zoom Bot Console</title>
+  <title>Zoom Bot Console — расписание</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -14,38 +14,56 @@
 
   <main>
     <section class="card">
-      <h2>Каркас запущен</h2>
-      <p>Это этап&nbsp;1 — базовый скелет. Дальше появятся расписание лекций,
-         интеграция с&nbsp;Zoom, планировщик и&nbsp;живой просмотр.</p>
-      <ul class="roadmap">
-        <li class="done">1. Каркас + Docker Compose</li>
-        <li>2. Веб-интерфейс расписания лекций</li>
-        <li>3. Интеграция с Zoom REST API</li>
-        <li>4. Планировщик запуска по времени</li>
-        <li>5. Bot-worker: Zoom-клиент на Ubuntu + Xvfb</li>
-        <li>6. Чат-модерация (AT-SPI → OCR)</li>
-        <li>7. Живой просмотр в вебе (WebSocket)</li>
-      </ul>
+      <h2>Новая лекция</h2>
+      <form id="lecture-form" class="grid">
+        <label>Название
+          <input name="title" required maxlength="255" placeholder="Лекция по матанализу">
+        </label>
+        <label>Начало
+          <input name="start_time" type="datetime-local" required>
+        </label>
+        <label>Длительность (мин)
+          <input name="duration_min" type="number" min="1" max="1440" value="60" required>
+        </label>
+        <label>Meeting ID
+          <input name="zoom_meeting_id" placeholder="123 4567 8901">
+        </label>
+        <label class="wide">Ссылка на вход (Join URL)
+          <input name="zoom_join_url" placeholder="https://zoom.us/j/...">
+        </label>
+        <label>Код доступа
+          <input name="zoom_passcode" placeholder="необязательно">
+        </label>
+        <label class="check">
+          <input name="record" type="checkbox"> Включать запись
+        </label>
+        <label class="check">
+          <input name="moderate" type="checkbox" checked> Вести модерацию чата
+        </label>
+        <div class="actions wide">
+          <button type="submit">Добавить в расписание</button>
+          <span id="form-msg" class="msg"></span>
+        </div>
+      </form>
+    </section>
+
+    <section class="card">
+      <h2>Расписание</h2>
+      <div class="table-wrap">
+        <table id="lectures">
+          <thead>
+            <tr>
+              <th>Начало</th><th>Название</th><th>Длит.</th>
+              <th>Meeting</th><th>Запись</th><th>Модер.</th>
+              <th>Статус</th><th></th>
+            </tr>
+          </thead>
+          <tbody><tr><td colspan="8" class="muted">загрузка…</td></tr></tbody>
+        </table>
+      </div>
     </section>
   </main>
 
-  <script>
-    async function refresh() {
-      const el = document.getElementById('status');
-      try {
-        const r = await fetch('/health');
-        const j = await r.json();
-        const ok = r.status === 200;
-        el.textContent = ok ? 'всё работает' : 'есть проблемы';
-        el.className = 'badge ' + (ok ? 'ok' : 'err');
-        el.title = `db: ${j.db} · redis: ${j.redis}`;
-      } catch (e) {
-        el.textContent = 'нет связи';
-        el.className = 'badge err';
-      }
-    }
-    refresh();
-    setInterval(refresh, 5000);
-  </script>
+  <script src="/static/app.js"></script>
 </body>
 </html>

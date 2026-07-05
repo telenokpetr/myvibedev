@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -6,13 +7,25 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import text
 
+from app import models  # noqa: F401  (регистрирует таблицы в metadata)
 from app.config import settings
-from app.database import engine
+from app.database import Base, engine
+from app.routers import lectures
 
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
-app = FastAPI(title="Zoom Bot Console", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Создаём таблицы при старте (для прод — заменим на Alembic-миграции).
+    Base.metadata.create_all(bind=engine)
+    yield
+
+
+app = FastAPI(title="Zoom Bot Console", version="0.1.0", lifespan=lifespan)
+
+app.include_router(lectures.router)
 
 static_dir = BASE_DIR / "static"
 static_dir.mkdir(exist_ok=True)
