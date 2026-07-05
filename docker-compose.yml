@@ -43,8 +43,17 @@ services:
     build: ./bot-worker
     restart: unless-stopped
     env_file: .env
+    # tini как pid1 — корректно «хоронит» дочерние процессы Zoom (zombie reaping)
+    init: true
     # Zoom-клиенту нужно больше /dev/shm, иначе падает рендер
     shm_size: "1gb"
+    environment:
+      SCREEN_GEOMETRY: "1280x720x24"
+      ZOOM_BOT_NAME: "Модератор"
+      RECORDINGS_DIR: "/data/recordings"
+      SCREENSHOTS_DIR: "/data/screenshots"
+    ports:
+      - "9000:9000"   # управляющий API bot-worker (для тестов/отладки)
     depends_on:
       - web
     volumes:

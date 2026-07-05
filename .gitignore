@@ -19,3 +19,6 @@ screenshots/
 .vscode/
 .idea/
 .DS_Store
+
+# временные скриншоты
+*.png
