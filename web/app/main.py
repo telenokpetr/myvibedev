@@ -10,7 +10,7 @@ from sqlalchemy import text
 from app import models  # noqa: F401  (регистрирует таблицы в metadata)
 from app.config import settings
 from app.database import Base, engine
-from app.routers import lectures
+from app.routers import events
 
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
@@ -25,7 +25,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Zoom Bot Console", version="0.1.0", lifespan=lifespan)
 
-app.include_router(lectures.router)
+app.include_router(events.router)
 
 static_dir = BASE_DIR / "static"
 static_dir.mkdir(exist_ok=True)

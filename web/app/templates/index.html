@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Zoom Bot Console — расписание</title>
+  <title>Zoom Bot Console — мероприятия</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -14,47 +14,55 @@
 
   <main>
     <section class="card">
-      <h2>Новая лекция</h2>
-      <form id="lecture-form" class="grid">
-        <label>Название
-          <input name="title" required maxlength="255" placeholder="Лекция по матанализу">
+      <h2>Новое мероприятие</h2>
+      <p class="hint">Бот зайдёт по ссылке под своим аккаунтом, введёт код организатора
+         и станет организатором/со-организатором, затем при необходимости включит запись.</p>
+      <form id="event-form" class="grid">
+        <label class="wide">Ссылка на мероприятие *
+          <input name="join_url" required placeholder="https://zoom.us/j/123456789?pwd=...">
         </label>
-        <label>Начало
-          <input name="start_time" type="datetime-local" required>
+        <label>Название
+          <input name="title" maxlength="255" placeholder="необязательно">
+        </label>
+        <label>Код доступа
+          <input name="passcode" placeholder="если не в ссылке">
+        </label>
+        <label>Код организатора (host key)
+          <input name="host_key" maxlength="32" placeholder="напр. 654321">
         </label>
         <label>Длительность (мин)
           <input name="duration_min" type="number" min="1" max="1440" value="60" required>
         </label>
-        <label>Meeting ID
-          <input name="zoom_meeting_id" placeholder="123 4567 8901">
-        </label>
-        <label class="wide">Ссылка на вход (Join URL)
-          <input name="zoom_join_url" placeholder="https://zoom.us/j/...">
-        </label>
-        <label>Код доступа
-          <input name="zoom_passcode" placeholder="необязательно">
-        </label>
+
+        <fieldset class="wide mode">
+          <legend>Когда запускать</legend>
+          <label class="radio"><input type="radio" name="mode" value="now" checked> Сейчас</label>
+          <label class="radio"><input type="radio" name="mode" value="scheduled"> По расписанию</label>
+          <input name="start_time" type="datetime-local" disabled>
+        </fieldset>
+
         <label class="check">
           <input name="record" type="checkbox"> Включать запись
         </label>
         <label class="check">
-          <input name="moderate" type="checkbox" checked> Вести модерацию чата
+          <input name="moderate" type="checkbox" checked> Модерация чата
         </label>
+
         <div class="actions wide">
-          <button type="submit">Добавить в расписание</button>
+          <button type="submit">Добавить</button>
           <span id="form-msg" class="msg"></span>
         </div>
       </form>
     </section>
 
     <section class="card">
-      <h2>Расписание</h2>
+      <h2>Мероприятия</h2>
       <div class="table-wrap">
-        <table id="lectures">
+        <table id="events">
           <thead>
             <tr>
-              <th>Начало</th><th>Название</th><th>Длит.</th>
-              <th>Meeting</th><th>Запись</th><th>Модер.</th>
+              <th>Старт</th><th>Название / ссылка</th><th>Длит.</th>
+              <th>Host key</th><th>Запись</th><th>Модер.</th>
               <th>Статус</th><th></th>
             </tr>
           </thead>

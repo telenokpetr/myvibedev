@@ -124,6 +124,42 @@ button.del:hover { color: var(--err); }
 .pill-canceled { background: #2a2f4a; color: var(--muted); }
 .pill-error { background: rgba(231,76,60,.18); color: var(--err); }
 
+.hint { font-size: 0.85rem; color: var(--muted); margin: -0.3rem 0 1rem; }
+
+/* Режим запуска */
+fieldset.mode {
+  border: 1px solid #2a2f4a;
+  border-radius: 8px;
+  padding: 0.7rem 0.9rem;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+fieldset.mode legend { color: var(--muted); font-size: 0.8rem; padding: 0 0.4rem; }
+label.radio { flex-direction: row; align-items: center; gap: 0.4rem; color: var(--text); }
+fieldset.mode input[type="datetime-local"] {
+  background: #12162a;
+  border: 1px solid #2a2f4a;
+  border-radius: 8px;
+  padding: 0.45rem 0.6rem;
+  color: var(--text);
+}
+fieldset.mode input[type="datetime-local"]:disabled { opacity: 0.45; }
+
+td a { color: var(--accent); text-decoration: none; }
+td a:hover { text-decoration: underline; }
+
+.row-actions { display: flex; gap: 0.3rem; }
+button.run {
+  background: transparent;
+  color: var(--muted);
+  padding: 0.2rem 0.5rem;
+  font-size: 0.9rem;
+}
+button.run:hover { color: var(--ok); }
+.pill-claiming { background: rgba(79,124,255,.18); color: var(--accent); }
+
 @media (max-width: 640px) {
   .grid { grid-template-columns: 1fr; }
 }

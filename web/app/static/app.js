@@ -1,16 +1,16 @@
 const STATUS_LABELS = {
-  scheduled: "запланирована",
+  scheduled: "запланировано",
   joining: "подключается",
+  claiming: "берёт хост",
   live: "в эфире",
   recording: "запись",
-  finished: "завершена",
-  canceled: "отменена",
+  finished: "завершено",
+  canceled: "отменено",
   error: "ошибка",
 };
 
 function fmtDate(iso) {
-  const d = new Date(iso);
-  return d.toLocaleString("ru-RU", {
+  return new Date(iso).toLocaleString("ru-RU", {
     day: "2-digit", month: "2-digit", year: "numeric",
     hour: "2-digit", minute: "2-digit",
   });
@@ -22,56 +22,92 @@ function esc(s) {
   }[c]));
 }
 
-async function loadLectures() {
-  const tbody = document.querySelector("#lectures tbody");
+function shortUrl(u) {
   try {
-    const r = await fetch("/api/lectures");
+    const url = new URL(u);
+    return url.host + url.pathname;
+  } catch {
+    return u;
+  }
+}
+
+async function loadEvents() {
+  const tbody = document.querySelector("#events tbody");
+  try {
+    const r = await fetch("/api/events");
     const items = await r.json();
     if (!items.length) {
-      tbody.innerHTML = '<tr><td colspan="8" class="muted">пока пусто — добавьте лекцию выше</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" class="muted">пока пусто — добавьте мероприятие выше</td></tr>';
       return;
     }
-    tbody.innerHTML = items.map((l) => `
+    tbody.innerHTML = items.map((e) => {
+      const name = e.title
+        ? esc(e.title)
+        : `<a href="${esc(e.join_url)}" target="_blank" rel="noopener">${esc(shortUrl(e.join_url))}</a>`;
+      return `
       <tr>
-        <td>${fmtDate(l.start_time)}</td>
-        <td>${esc(l.title)}</td>
-        <td>${l.duration_min}м</td>
-        <td>${esc(l.zoom_meeting_id) || "—"}</td>
-        <td>${l.record ? "🔴" : "—"}</td>
-        <td>${l.moderate ? "✓" : "—"}</td>
-        <td><span class="pill pill-${l.status}">${STATUS_LABELS[l.status] || l.status}</span></td>
-        <td><button class="del" data-id="${l.id}" title="Удалить">✕</button></td>
-      </tr>`).join("");
+        <td>${fmtDate(e.start_time)}</td>
+        <td>${name}</td>
+        <td>${e.duration_min}м</td>
+        <td>${e.host_key ? "🔑" : "—"}</td>
+        <td>${e.record ? "🔴" : "—"}</td>
+        <td>${e.moderate ? "✓" : "—"}</td>
+        <td><span class="pill pill-${e.status}">${STATUS_LABELS[e.status] || e.status}</span></td>
+        <td class="row-actions">
+          <button class="run" data-id="${e.id}" title="Запустить сейчас">▶</button>
+          <button class="del" data-id="${e.id}" title="Удалить">✕</button>
+        </td>
+      </tr>`;
+    }).join("");
 
-    tbody.querySelectorAll("button.del").forEach((btn) => {
-      btn.addEventListener("click", () => deleteLecture(btn.dataset.id));
-    });
-  } catch (e) {
+    tbody.querySelectorAll("button.del").forEach((b) =>
+      b.addEventListener("click", () => deleteEvent(b.dataset.id)));
+    tbody.querySelectorAll("button.run").forEach((b) =>
+      b.addEventListener("click", () => startNow(b.dataset.id)));
+  } catch {
     tbody.innerHTML = '<tr><td colspan="8" class="err-cell">не удалось загрузить</td></tr>';
   }
 }
 
-async function deleteLecture(id) {
-  if (!confirm("Удалить лекцию из расписания?")) return;
-  const r = await fetch(`/api/lectures/${id}`, { method: "DELETE" });
-  if (r.ok) loadLectures();
+async function deleteEvent(id) {
+  if (!confirm("Удалить мероприятие?")) return;
+  const r = await fetch(`/api/events/${id}`, { method: "DELETE" });
+  if (r.ok) loadEvents();
 }
 
-document.getElementById("lecture-form").addEventListener("submit", async (e) => {
+async function startNow(id) {
+  if (!confirm("Запустить сейчас? Бот подключится, как только будет готов планировщик и воркер.")) return;
+  const r = await fetch(`/api/events/${id}/start-now`, { method: "POST" });
+  if (r.ok) loadEvents();
+}
+
+// Переключение режима: datetime активно только для «по расписанию».
+const form = document.getElementById("event-form");
+form.querySelectorAll('input[name="mode"]').forEach((radio) => {
+  radio.addEventListener("change", () => {
+    const scheduled = form.mode.value === "scheduled";
+    form.start_time.disabled = !scheduled;
+    form.start_time.required = scheduled;
+  });
+});
+
+form.addEventListener("submit", async (e) => {
   e.preventDefault();
   const f = e.target;
   const msg = document.getElementById("form-msg");
+  const isNow = f.mode.value === "now";
   const payload = {
-    title: f.title.value.trim(),
-    start_time: f.start_time.value,   // "YYYY-MM-DDTHH:MM" — локальное время
+    title: f.title.value.trim() || null,
+    join_url: f.join_url.value.trim(),
+    passcode: f.passcode.value.trim() || null,
+    host_key: f.host_key.value.trim() || null,
     duration_min: Number(f.duration_min.value),
-    zoom_meeting_id: f.zoom_meeting_id.value.trim() || null,
-    zoom_join_url: f.zoom_join_url.value.trim() || null,
-    zoom_passcode: f.zoom_passcode.value.trim() || null,
     record: f.record.checked,
     moderate: f.moderate.checked,
+    start_now: isNow,
+    start_time: isNow ? null : f.start_time.value,
   };
-  const r = await fetch("/api/lectures", {
+  const r = await fetch("/api/events", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -82,11 +118,13 @@ document.getElementById("lecture-form").addEventListener("submit", async (e) => 
     f.reset();
     f.moderate.checked = true;
     f.duration_min.value = 60;
-    loadLectures();
+    f.start_time.disabled = true;
+    loadEvents();
     setTimeout(() => (msg.textContent = ""), 2500);
   } else {
     const err = await r.json().catch(() => ({}));
-    msg.textContent = "ошибка: " + (err.detail?.[0]?.msg || err.detail || r.status);
+    const detail = Array.isArray(err.detail) ? err.detail[0]?.msg : err.detail;
+    msg.textContent = "ошибка: " + (detail || r.status);
     msg.className = "msg err";
   }
 });
@@ -106,6 +144,6 @@ async function refreshStatus() {
   }
 }
 
-loadLectures();
+loadEvents();
 refreshStatus();
 setInterval(refreshStatus, 5000);
