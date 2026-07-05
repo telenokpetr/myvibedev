@@ -55,6 +55,7 @@ async function loadEvents() {
         <td><span class="pill pill-${e.status}">${STATUS_LABELS[e.status] || e.status}</span></td>
         <td class="row-actions">
           <button class="run" data-id="${e.id}" title="Запустить сейчас">▶</button>
+          <button class="stop" data-id="${e.id}" title="Остановить">⏹</button>
           <button class="del" data-id="${e.id}" title="Удалить">✕</button>
         </td>
       </tr>`;
@@ -64,6 +65,8 @@ async function loadEvents() {
       b.addEventListener("click", () => deleteEvent(b.dataset.id)));
     tbody.querySelectorAll("button.run").forEach((b) =>
       b.addEventListener("click", () => startNow(b.dataset.id)));
+    tbody.querySelectorAll("button.stop").forEach((b) =>
+      b.addEventListener("click", () => stopEvent(b.dataset.id)));
   } catch {
     tbody.innerHTML = '<tr><td colspan="8" class="err-cell">не удалось загрузить</td></tr>';
   }
@@ -76,8 +79,14 @@ async function deleteEvent(id) {
 }
 
 async function startNow(id) {
-  if (!confirm("Запустить сейчас? Бот подключится, как только будет готов планировщик и воркер.")) return;
+  if (!confirm("Запустить сейчас? Бот подключится в ближайшие секунды.")) return;
   const r = await fetch(`/api/events/${id}/start-now`, { method: "POST" });
+  if (r.ok) loadEvents();
+}
+
+async function stopEvent(id) {
+  if (!confirm("Остановить мероприятие? Бот выйдет из конференции.")) return;
+  const r = await fetch(`/api/events/${id}/stop`, { method: "POST" });
   if (r.ok) loadEvents();
 }
 

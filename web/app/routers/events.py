@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import models, schemas
+from app import bot_client, models, schemas
 from app.database import get_db
 
 router = APIRouter(prefix="/api/events", tags=["events"])
@@ -62,6 +62,19 @@ def start_now(event_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Мероприятие не найдено")
     event.start_time = datetime.now(timezone.utc)
     event.status = models.EventStatus.scheduled
+    db.commit()
+    db.refresh(event)
+    return event
+
+
+@router.post("/{event_id}/stop", response_model=schemas.EventOut)
+def stop_event(event_id: int, db: Session = Depends(get_db)):
+    """Досрочно завершить: бот выходит из конференции, статус — завершено."""
+    event = db.get(models.Event, event_id)
+    if event is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Мероприятие не найдено")
+    bot_client.leave()
+    event.status = models.EventStatus.finished
     db.commit()
     db.refresh(event)
     return event

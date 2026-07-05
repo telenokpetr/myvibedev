@@ -8,6 +8,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import text
 
 from app import models  # noqa: F401  (регистрирует таблицы в metadata)
+from app import scheduler
 from app.config import settings
 from app.database import Base, engine
 from app.routers import events
@@ -20,7 +21,9 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 async def lifespan(app: FastAPI):
     # Создаём таблицы при старте (для прод — заменим на Alembic-миграции).
     Base.metadata.create_all(bind=engine)
+    scheduler.start()
     yield
+    scheduler.stop()
 
 
 app = FastAPI(title="Zoom Bot Console", version="0.1.0", lifespan=lifespan)
