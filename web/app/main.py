@@ -1,12 +1,15 @@
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+import websockets
+from fastapi import FastAPI, Request, WebSocket
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import text
 
+from app import bot_client
 from app import models  # noqa: F401  (регистрирует таблицы в metadata)
 from app import scheduler
 from app.config import settings
@@ -63,3 +66,50 @@ def health():
 @app.get("/")
 def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
+
+
+@app.get("/api/bot/status")
+def bot_status():
+    """Статус bot-worker (для панели живого просмотра)."""
+    return bot_client.status() or {"status": "unavailable"}
+
+
+@app.post("/api/bot/recording/start")
+def bot_recording_start(target: str = "local"):
+    return bot_client.recording_start(target) or {"error": "bot-worker недоступен"}
+
+
+@app.post("/api/bot/recording/{action}")
+def bot_recording_action(action: str):
+    if action not in ("pause", "resume", "stop"):
+        return JSONResponse({"error": "неизвестное действие"}, status_code=400)
+    return bot_client.recording_action(action) or {"error": "bot-worker недоступен"}
+
+
+@app.post("/api/bot/mute-all")
+def bot_mute_all():
+    return bot_client.mute_all() or {"error": "bot-worker недоступен"}
+
+
+@app.websocket("/api/preview")
+async def preview_proxy(ws: WebSocket):
+    """Проксируем A/V-поток bot-worker в браузер (единый origin)."""
+    await ws.accept()
+    upstream = (
+        settings.bot_worker_url.replace("http://", "ws://").replace("https://", "wss://")
+        + "/preview"
+    )
+    try:
+        async with websockets.connect(upstream, max_size=None) as up:
+            while True:
+                data = await up.recv()
+                if isinstance(data, str):
+                    data = data.encode()
+                await ws.send_bytes(data)
+    except Exception:  # noqa: BLE001
+        pass
+    finally:
+        try:
+            await ws.close()
+        except Exception:  # noqa: BLE001
+            pass

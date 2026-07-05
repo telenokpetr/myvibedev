@@ -14,10 +14,15 @@ class Recorder:
     def __init__(self) -> None:
         self._proc: subprocess.Popen | None = None
         self._path: str | None = None
+        self._paused: bool = False
 
     @property
     def active(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
+
+    @property
+    def paused(self) -> bool:
+        return self._paused
 
     @property
     def path(self) -> str | None:
@@ -50,9 +55,28 @@ class Recorder:
         )
         return self._path
 
+    def pause(self) -> bool:
+        """Пауза локальной записи: замораживаем ffmpeg сигналом SIGSTOP."""
+        if not self.active or self._paused:
+            return False
+        self._proc.send_signal(signal.SIGSTOP)
+        self._paused = True
+        return True
+
+    def resume(self) -> bool:
+        if not self.active or not self._paused:
+            return False
+        self._proc.send_signal(signal.SIGCONT)
+        self._paused = False
+        return True
+
     def stop(self) -> str | None:
         if not self.active:
             return self._path
+        # На паузе процесс заморожен — сначала разбудим, иначе не примет 'q'.
+        if self._paused:
+            self._proc.send_signal(signal.SIGCONT)
+            self._paused = False
         # 'q' в stdin — корректное завершение ffmpeg (закрывает контейнер).
         try:
             self._proc.communicate(input=b"q", timeout=10)
@@ -64,6 +88,7 @@ class Recorder:
                 self._proc.kill()
         path = self._path
         self._proc = None
+        self._paused = False
         return path
 
 

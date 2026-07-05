@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 from app import gui, zoom
 from app.recorder import recorder
+from app.recording import recording
 
 
 @dataclass
@@ -38,7 +39,8 @@ class SessionManager:
 
     def status(self) -> dict:
         d = asdict(self._state)
-        d["recording_active"] = recorder.active
+        d["recording"] = recording.status()
+        d["recording_active"] = recording.status()["active"]
         return d
 
     def join(self, join_url: str, passcode: str | None, host_key: str | None,
@@ -79,10 +81,10 @@ class SessionManager:
                 self._state.status = "live"
 
             if record:
-                path = recorder.start(title or "event")
-                self._state.recording_path = path
+                res = recording.start("local", title or "event")
+                self._state.recording_path = res.get("path")
                 self._state.status = "recording"
-                self._log(f"запись начата: {path}")
+                self._log(f"запись (локально) начата: {res.get('path')}")
 
         except Exception as exc:  # noqa: BLE001
             self._state.status = "error"
@@ -92,10 +94,10 @@ class SessionManager:
     def leave(self) -> None:
         with self._lock:
             self._log("выхожу из конференции")
-            if recorder.active:
-                path = recorder.stop()
-                self._state.recording_path = path
-                self._log(f"запись сохранена: {path}")
+            if recording.status()["active"]:
+                res = recording.stop()
+                self._state.recording_path = res.get("path")
+                self._log(f"запись остановлена: {res.get('path')}")
             zoom.kill()
             self._state.status = "finished"
 

@@ -2,11 +2,14 @@ import os
 import subprocess
 import tempfile
 
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
+from app import gui
 from app.config import config
+from app.preview import preview
+from app.recording import recording
 from app.session import session
 
 app = FastAPI(title="Zoom Bot Worker", version="0.2.0")
@@ -28,6 +31,11 @@ class JoinRequest(BaseModel):
     passcode: str | None = None
     host_key: str | None = None
     record: bool = False
+    title: str | None = None
+
+
+class RecordStartRequest(BaseModel):
+    target: str = "local"       # "local" | "cloud"
     title: str | None = None
 
 
@@ -60,6 +68,36 @@ def status():
     return session.status()
 
 
+@app.post("/recording/start")
+def recording_start(req: RecordStartRequest):
+    return recording.start(req.target, req.title or "event")
+
+
+@app.post("/recording/pause")
+def recording_pause():
+    return {"paused": recording.pause()}
+
+
+@app.post("/recording/resume")
+def recording_resume():
+    return {"resumed": recording.resume()}
+
+
+@app.post("/recording/stop")
+def recording_stop():
+    return recording.stop()
+
+
+@app.get("/recording/status")
+def recording_status():
+    return recording.status()
+
+
+@app.post("/moderation/mute-all")
+def mute_all():
+    return {"ok": gui.mute_all()}
+
+
 @app.get("/screenshot")
 def screenshot():
     """Снимок текущего экрана (что видит бот)."""
@@ -72,6 +110,21 @@ def screenshot():
         check=True, timeout=10,
     )
     return FileResponse(path, media_type="image/png", filename="screen.png")
+
+
+@app.websocket("/preview")
+async def preview_ws(ws: WebSocket):
+    """Живой поток экрана+звука (MPEG-TS для jsmpeg)."""
+    await ws.accept()
+    await preview.add(ws)
+    try:
+        while True:
+            # Ждём закрытия соединения; данные шлём мы, от клиента ничего не нужно.
+            await ws.receive_bytes()
+    except Exception:  # noqa: BLE001
+        pass
+    finally:
+        await preview.remove(ws)
 
 
 @app.get("/recordings")

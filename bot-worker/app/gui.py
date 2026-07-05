@@ -94,10 +94,35 @@ def claim_host(host_key: str) -> bool:
     return False
 
 
-def start_recording_via_ui() -> bool:
-    """Нажать «Запись» в самом клиенте (альтернатива нашей ffmpeg-записи).
+def mute_all() -> bool:
+    """Отключить звук всем участникам (модерация).
 
-    По умолчанию мы пишем экран через ffmpeg (см. recorder.py), поэтому этот путь
-    опционален. TODO(калибровка): клик по кнопке Record / пункту меню.
+    TODO(калибровка): Participants → Mute All → подтвердить. Точные клики
+    подставим по скриншотам живого митинга.
     """
+    activate_meeting_window()
+    return False
+
+
+def start_cloud_recording() -> bool:
+    """Запустить облачную запись Zoom (нужны host-права и платный аккаунт).
+
+    TODO(калибровка): More (⋯) → Record to the Cloud, либо host-контрол записи.
+    """
+    activate_meeting_window()
+    return False
+
+
+def pause_cloud_recording() -> bool:
+    """TODO(калибровка): host-контрол «Pause Recording»."""
+    return False
+
+
+def resume_cloud_recording() -> bool:
+    """TODO(калибровка): host-контрол «Resume Recording»."""
+    return False
+
+
+def stop_cloud_recording() -> bool:
+    """TODO(калибровка): host-контрол «Stop Recording»."""
     return False
