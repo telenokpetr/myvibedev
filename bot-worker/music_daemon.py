@@ -13,12 +13,20 @@ DISPLAY = ":99"
 ENV = {**os.environ, "DISPLAY": DISPLAY}
 VMIC = "vmic"
 MON = "vspeaker.monitor"
-VOL = os.environ.get("MUSIC_VOL", "0.4")
+VOL = os.environ.get("MUSIC_VOL", "0.05")
+MUSIC_DIR = os.environ.get("MUSIC_DIR", "/data/music")
 
-PLAYLIST = [
-    "/data/music/wagner-ride-of-the-valkyries.mp3",
-    "/data/music/wagner-tannhauser-overture.mp3",
-]
+
+def load_playlist():
+    """Все mp3 из MUSIC_DIR по алфавиту — новые файлы подхватываются сами."""
+    try:
+        files = sorted(f for f in os.listdir(MUSIC_DIR) if f.lower().endswith(".mp3"))
+    except FileNotFoundError:
+        files = []
+    return [os.path.join(MUSIC_DIR, f) for f in files]
+
+
+PLAYLIST = load_playlist()
 
 SPEECH_RMS = int(os.environ.get("SPEECH_RMS", "150"))          # порог RMS s16: меньше = чувствительнее
 HANGOVER = float(os.environ.get("HANGOVER", "0.6"))            # с: речь непрерывна, если громкий кадр был недавно

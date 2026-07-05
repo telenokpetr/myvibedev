@@ -101,8 +101,12 @@ vmic     (null-sink)  ← music_daemon (ffmpeg)          → vmic.monitor
 Пол тишины на `vspeaker.monitor` при молчании = **0** (цифровая тишина null-sink),
 поэтому порог можно держать низким без ложных срабатываний.
 
-Проверено вживую: `PAUSE — речь 2.0s` → `RESUME — тишина 60s`. Треки Вагнера
-(public domain, archive.org) кладутся в `/data/music`.
+Проверено вживую: `PAUSE — речь 2.0s` → `RESUME — тишина 60s`.
+
+**Плейлист** строится динамически из всех `*.mp3` в `/data/music` (алфавит) —
+новый файл подхватывается сам. Треки: Вагнер (public domain) + современный
+эпик-оркестр с Jamendo/archive.org под **CC BY 3.0** (атрибуция в
+`/data/music/CREDITS.txt` — CC BY требует указания авторства).
 
 Запуск: `MUSIC_VOL=0.2 SPEECH_RMS=150 python3 /app/music_daemon.py`.
 Стоп: `pkill -f music_daemon`.
