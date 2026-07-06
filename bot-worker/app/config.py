@@ -7,6 +7,7 @@ class Config:
     bot_name: str = os.environ.get("ZOOM_BOT_NAME", "Модератор")
     recordings_dir: str = os.environ.get("RECORDINGS_DIR", "/data/recordings")
     screenshots_dir: str = os.environ.get("SCREENSHOTS_DIR", "/data/screenshots")
+    music_dir: str = os.environ.get("MUSIC_DIR", "/data/music")
     # Куда сообщать статус (web-сервис). Необязательно.
     callback_url: str = os.environ.get("WEB_CALLBACK_URL", "")
 

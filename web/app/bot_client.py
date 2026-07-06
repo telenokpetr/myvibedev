@@ -88,3 +88,56 @@ def moderation_test(sender: str, text: str) -> dict | None:
     except Exception as exc:  # noqa: BLE001
         log.warning("moderation_test failed: %s", exc)
         return None
+
+
+# ---- Музыка (виртуальный микрофон) ----
+
+def music_status() -> dict | None:
+    try:
+        r = httpx.get(f"{BASE}/music/status", timeout=10)
+        r.raise_for_status()
+        return r.json()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def music_action(action: str) -> dict | None:
+    """action: start | stop | pause | resume | next | prev."""
+    try:
+        r = httpx.post(f"{BASE}/music/{action}", timeout=15)
+        r.raise_for_status()
+        return r.json()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("music_%s failed: %s", action, exc)
+        return None
+
+
+def music_volume(volume: int) -> dict | None:
+    try:
+        r = httpx.post(f"{BASE}/music/volume", json={"volume": volume}, timeout=10)
+        r.raise_for_status()
+        return r.json()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("music_volume failed: %s", exc)
+        return None
+
+
+def music_upload(filename: str, data: bytes) -> tuple[dict | None, int]:
+    """Загрузить трек в bot-worker. Возвращает (json, http_status)."""
+    try:
+        r = httpx.post(f"{BASE}/music/upload",
+                       files={"file": (filename, data, "audio/mpeg")}, timeout=30)
+        return r.json(), r.status_code
+    except Exception as exc:  # noqa: BLE001
+        log.warning("music_upload failed: %s", exc)
+        return None, 502
+
+
+def music_delete(name: str) -> dict | None:
+    try:
+        r = httpx.delete(f"{BASE}/music/tracks/{name}", timeout=15)
+        r.raise_for_status()
+        return r.json()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("music_delete failed: %s", exc)
+        return None

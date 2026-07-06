@@ -17,6 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         wmctrl \
         scrot \
         ffmpeg \
+        mpv \
         tesseract-ocr \
         tesseract-ocr-rus \
         pulseaudio \
@@ -60,7 +61,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Непривилегированный пользователь (Zoom и PulseAudio не любят root).
 RUN useradd -m -s /bin/bash zoom \
-    && mkdir -p /data/recordings /data/screenshots /tmp/runtime-zoom \
+    && mkdir -p /data/recordings /data/screenshots /data/music /tmp/runtime-zoom \
     && chown -R zoom:zoom /data /tmp/runtime-zoom \
     && chmod 700 /tmp/runtime-zoom
 

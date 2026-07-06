@@ -2,7 +2,7 @@ import os
 import subprocess
 import tempfile
 
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, File, UploadFile, WebSocket
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
@@ -10,6 +10,7 @@ from app import gui
 from app.chatreader import ChatMessage
 from app.config import config
 from app.moderation import moderator
+from app.music import music
 from app.preview import preview
 from app.recording import recording
 from app.session import session
@@ -45,6 +46,10 @@ class ChatTestRequest(BaseModel):
 class RecordStartRequest(BaseModel):
     target: str = "local"       # "local" | "cloud"
     title: str | None = None
+
+
+class VolumeRequest(BaseModel):
+    volume: int
 
 
 @app.get("/health")
@@ -119,6 +124,62 @@ def moderation_test(req: ChatTestRequest):
     if ev is None:
         return {"detected": False}
     return {"detected": True, "event": ev.__dict__}
+
+
+# ---- Музыка (виртуальный микрофон): open-source плеер mpv ----
+
+@app.get("/music/status")
+def music_status():
+    return music.status()
+
+
+@app.post("/music/start")
+def music_start():
+    return music.start()
+
+
+@app.post("/music/stop")
+def music_stop():
+    return music.stop()
+
+
+@app.post("/music/pause")
+def music_pause():
+    return music.pause()
+
+
+@app.post("/music/resume")
+def music_resume():
+    return music.resume()
+
+
+@app.post("/music/next")
+def music_next():
+    return music.next()
+
+
+@app.post("/music/prev")
+def music_prev():
+    return music.prev()
+
+
+@app.post("/music/volume")
+def music_volume(req: VolumeRequest):
+    return music.set_volume(req.volume)
+
+
+@app.post("/music/upload")
+async def music_upload(file: UploadFile = File(...)):
+    data = await file.read()
+    try:
+        return music.add_file(file.filename, data)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+
+@app.delete("/music/tracks/{name}")
+def music_delete(name: str):
+    return music.delete_track(name)
 
 
 @app.get("/screenshot")

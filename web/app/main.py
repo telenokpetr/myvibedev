@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import websockets
-from fastapi import Body, FastAPI, Request, WebSocket
+from fastapi import Body, FastAPI, File, Request, UploadFile, WebSocket
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -89,6 +89,47 @@ def bot_recording_action(action: str):
 @app.post("/api/bot/mute-all")
 def bot_mute_all():
     return bot_client.mute_all() or {"error": "bot-worker недоступен"}
+
+
+# ---- Музыка (проксирование в bot-worker) ----
+MUSIC_MAX = 5 * 1024 * 1024  # 5 МБ
+
+
+@app.get("/api/bot/music/status")
+def bot_music_status():
+    return bot_client.music_status() or {"error": "bot-worker недоступен"}
+
+
+@app.post("/api/bot/music/volume")
+def bot_music_volume(payload: dict = Body(...)):
+    try:
+        vol = int(payload.get("volume", 60))
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "volume должен быть числом"}, status_code=400)
+    return bot_client.music_volume(vol) or {"error": "bot-worker недоступен"}
+
+
+@app.post("/api/bot/music/upload")
+async def bot_music_upload(file: UploadFile = File(...)):
+    if not (file.filename or "").lower().endswith(".mp3"):
+        return JSONResponse({"error": "только .mp3"}, status_code=400)
+    data = await file.read()
+    if len(data) > MUSIC_MAX:
+        return JSONResponse({"error": "файл больше 5 МБ"}, status_code=413)
+    j, code = bot_client.music_upload(file.filename, data)
+    return JSONResponse(j or {"error": "bot-worker недоступен"}, status_code=code)
+
+
+@app.delete("/api/bot/music/tracks/{name}")
+def bot_music_delete(name: str):
+    return bot_client.music_delete(name) or {"error": "bot-worker недоступен"}
+
+
+@app.post("/api/bot/music/{action}")
+def bot_music_action(action: str):
+    if action not in ("start", "stop", "pause", "resume", "next", "prev"):
+        return JSONResponse({"error": "неизвестное действие"}, status_code=400)
+    return bot_client.music_action(action) or {"error": "bot-worker недоступен"}
 
 
 @app.post("/api/bot/moderation/test")

@@ -122,11 +122,49 @@
         </table>
       </div>
     </section>
+
+    <section class="card">
+      <div class="preview-head">
+        <h2>🎵 Музыка (микрофон бота)</h2>
+        <span class="pill" id="music-state">—</span>
+      </div>
+      <p class="hint">Фоновая музыка идёт в микрофон бота (BotMic) с автопаузой на речь.
+         Плеер — <strong>mpv</strong>. Можно загрузить свои mp3 (до&nbsp;5&nbsp;МБ).</p>
+
+      <div class="control-row">
+        <button id="music-toggle-run" class="run">▶ Включить музыку</button>
+        <button id="music-prev" class="ghost" title="Предыдущий" disabled>⏮</button>
+        <button id="music-playpause" class="ghost" title="Пауза / играть" disabled>⏸</button>
+        <button id="music-next" class="ghost" title="Следующий" disabled>⏭</button>
+        <span class="pill" id="music-current">—</span>
+      </div>
+
+      <div class="control-row">
+        <span class="ctl-label">Громкость:</span>
+        <input type="range" id="music-volume" min="0" max="130" value="60"
+               style="flex:1;min-width:150px">
+        <span id="music-volume-val" class="muted">60%</span>
+      </div>
+
+      <div class="control-row">
+        <input type="file" id="music-file" accept=".mp3,audio/mpeg">
+        <button id="music-upload-btn">📤 Загрузить трек</button>
+        <span id="music-upload-msg" class="msg"></span>
+      </div>
+
+      <div class="table-wrap">
+        <table id="music-tracks">
+          <thead><tr><th>Трек</th><th></th></tr></thead>
+          <tbody><tr><td colspan="2" class="muted">нет треков</td></tr></tbody>
+        </table>
+      </div>
+    </section>
   </main>
 
   <script src="/static/vendor/jsmpeg.min.js"></script>
   <script src="/static/app.js"></script>
   <script src="/static/preview.js"></script>
   <script src="/static/moderation.js"></script>
+  <script src="/static/music.js"></script>
 </body>
 </html>
