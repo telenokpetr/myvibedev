@@ -228,3 +228,31 @@ button:disabled { opacity: 0.5; cursor: default; }
 @media (max-width: 640px) {
   .grid { grid-template-columns: 1fr; }
 }
+
+/* Инструкция (сворачиваемая карточка) */
+details.help summary {
+  cursor: pointer;
+  font-size: 1.15rem;
+  font-weight: 600;
+  list-style: none;
+  outline: none;
+}
+details.help summary::-webkit-details-marker { display: none; }
+details.help summary::before { content: "▸ "; color: var(--accent); }
+details.help[open] summary::before { content: "▾ "; }
+details.help h3 {
+  margin: 1.1rem 0 0.3rem;
+  font-size: 1rem;
+  color: var(--accent);
+}
+details.help ol,
+details.help ul { margin: 0.3rem 0 0.6rem 1.2rem; padding: 0; }
+details.help li { margin: 0.25rem 0; }
+details.help p { margin: 0.4rem 0; }
+.kbd {
+  background: #2a2f4a;
+  border-radius: 4px;
+  padding: 0 0.35em;
+  font-size: 0.85em;
+  white-space: nowrap;
+}
