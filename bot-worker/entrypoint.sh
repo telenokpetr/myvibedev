@@ -7,6 +7,11 @@ SCREEN_GEOMETRY="${SCREEN_GEOMETRY:-1280x720x24}"
 mkdir -p "${XDG_RUNTIME_DIR}" 2>/dev/null || true
 chmod 700 "${XDG_RUNTIME_DIR}" 2>/dev/null || true
 
+# Чистим протухший lock/сокет от упавшего Xvfb — иначе при рестарте новый сервер
+# видит их и падает с «Server is already active for display» (дисплей не поднимается).
+DISPNUM="${DISPLAY#:}"; DISPNUM="${DISPNUM%%.*}"
+rm -f "/tmp/.X${DISPNUM}-lock" "/tmp/.X11-unix/X${DISPNUM}" 2>/dev/null || true
+
 echo "[entrypoint] Xvfb на ${DISPLAY} (${SCREEN_GEOMETRY})"
 Xvfb "${DISPLAY}" -screen 0 "${SCREEN_GEOMETRY}" -nolisten tcp &
 for i in $(seq 1 40); do
