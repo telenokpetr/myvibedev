@@ -38,11 +38,14 @@ _LEET = str.maketrans({
 })
 
 
+def strip_delims(text: str) -> str:
+    """lower + убрать разделители между буквами: "х-у-й", "п и з д а", "f u c k"."""
+    return re.sub(r"[\s\.\-_*]+", "", text.lower())
+
+
 def normalize(text: str) -> str:
-    t = text.lower().translate(_LEET)
-    # убираем разделители между буквами: "х-у-й", "п и з д а"
-    t = re.sub(r"[\s\.\-_*]+", "", t)
-    return t
+    """Полная нормализация: разделители + leet-подстановки (кир. обфускация)."""
+    return strip_delims(text).translate(_LEET)
 
 
 class ProfanityFilter:
@@ -51,7 +54,11 @@ class ProfanityFilter:
         self._re = re.compile("|".join(roots))
 
     def check(self, text: str) -> bool:
-        return bool(self._re.search(normalize(text)))
+        # По «сырому» тексту (ловит англ. корни: fuck/bitch/dick) И по
+        # leet-нормализованному (ловит кир. обфускацию: п1зд, e6a). Одна таблица
+        # _LEET мапит латиницу в кириллицу и портит англ. слова — потому две проверки.
+        return bool(self._re.search(strip_delims(text))
+                    or self._re.search(normalize(text)))
 
 
 class SpamDetector:

@@ -69,6 +69,14 @@ class SessionManager:
 
             gui.dismiss_startup_dialogs()
             gui.activate_meeting_window()
+
+            # Верифицируем вход по окну, а не ставим live вслепую (см. баг §7):
+            # при «Invalid meeting ID» окно митинга не появится → это ошибка.
+            if not gui.wait_in_meeting():
+                self._state.status = "error"
+                self._state.error = "вход не подтверждён (окно митинга не появилось)"
+                self._log("вход НЕ подтверждён — окна конференции нет")
+                return
             self._state.status = "live"
             self._log("бот в конференции")
 
@@ -104,7 +112,8 @@ class SessionManager:
                 res = recording.stop()
                 self._state.recording_path = res.get("path")
                 self._log(f"запись остановлена: {res.get('path')}")
-            zoom.kill()
+            zoom.kill(self._proc)
+            self._proc = None
             self._state.status = "finished"
 
 

@@ -7,6 +7,7 @@
 """
 
 import os
+import re
 import subprocess
 import time
 
@@ -59,6 +60,39 @@ def activate_meeting_window() -> str | None:
     _run(["xdotool", "windowactivate", "--sync", wid])
     _run(["wmctrl", "-i", "-r", wid, "-b", "add,maximized_vert,maximized_horz"])
     return wid
+
+
+def _window_size(wid: str) -> tuple[int, int] | None:
+    out = _run(["xdotool", "getwindowgeometry", wid]).stdout
+    m = re.search(r"Geometry:\s*(\d+)x(\d+)", out)
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def verify_in_meeting(min_ratio: float = 0.6) -> bool:
+    """True, если бот реально в окне митинга, а не завис на диалоге ошибки/ожидания.
+
+    Верификация без OCR (см. баг «слепой state machine» в docs/CALIBRATION.md §7):
+    окно конференции развёрнуто почти на весь экран, а диалоги «Invalid meeting ID»
+    / «Waiting for host» — маленькие. Считаем входом наличие Zoom-окна шириной и
+    высотой >= min_ratio экрана.
+    """
+    min_w = config.width * min_ratio
+    min_h = config.height * min_ratio
+    for wid in find_zoom_windows():
+        size = _window_size(wid)
+        if size and size[0] >= min_w and size[1] >= min_h:
+            return True
+    return False
+
+
+def wait_in_meeting(timeout: float = 40.0, interval: float = 2.0) -> bool:
+    """Ждём появления окна митинга до timeout сек. False — вход не подтверждён."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if verify_in_meeting():
+            return True
+        time.sleep(interval)
+    return False
 
 
 def move_mouse_center() -> None:

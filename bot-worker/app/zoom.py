@@ -56,5 +56,16 @@ def launch(join_url: str, passcode: str | None) -> subprocess.Popen:
     )
 
 
-def kill() -> None:
+def kill(proc: subprocess.Popen | None = None) -> None:
+    """Завершаем Zoom и reap-аем наш Popen, чтобы не копить <defunct>-зомби."""
     subprocess.run(["pkill", "-TERM", "zoom"], env=ENV, check=False)
+    if proc is None:
+        return
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()          # не отреагировал на TERM — добиваем KILL
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
