@@ -66,6 +66,51 @@
     </details>
 
     <section class="card">
+      <div class="preview-head">
+        <h2>🔐 Аккаунт бота</h2>
+        <span class="pill" id="acc-state">—</span>
+      </div>
+      <p class="hint">Бот заходит в конференции под этим аккаунтом — тогда роль
+         организатора переходит ему автоматически. Можно и без аккаунта: гостем по
+         ссылке (для прав хоста нужен host key).</p>
+
+      <div id="acc-login" class="grid">
+        <label>Email
+          <input id="acc-email" type="email" placeholder="bot@example.com"
+                 autocomplete="username">
+        </label>
+        <label>Пароль
+          <input id="acc-password" type="password" autocomplete="current-password">
+        </label>
+        <div class="actions wide">
+          <button id="acc-signin">Войти</button>
+          <span id="acc-msg" class="msg"></span>
+        </div>
+      </div>
+
+      <div id="acc-otp-row" class="control-row" style="display:none">
+        <span class="ctl-label">Код из письма (OTP):</span>
+        <input id="acc-otp" inputmode="numeric" maxlength="6" placeholder="6 цифр"
+               style="max-width:120px">
+        <button id="acc-otp-submit">Подтвердить</button>
+        <span id="acc-otp-msg" class="msg"></span>
+      </div>
+
+      <div id="acc-logged" class="control-row" style="display:none">
+        ✅ Вошёл как <strong id="acc-email-shown"></strong>.
+        <span class="muted">Сессия сохраняется между перезапусками.</span>
+      </div>
+
+      <div class="control-row">
+        <span class="ctl-label">Ник по умолчанию:</span>
+        <input id="acc-nick" placeholder="Модератор IPDC TG@telenokpetr"
+               style="flex:1;min-width:180px">
+        <button id="acc-nick-save" class="ghost">Сохранить</button>
+        <span id="acc-nick-msg" class="msg"></span>
+      </div>
+    </section>
+
+    <section class="card">
       <h2>Новое мероприятие</h2>
       <p class="hint">Бот зайдёт по ссылке под своим аккаунтом, введёт код организатора
          и станет организатором/со-организатором, затем при необходимости включит запись.</p>
@@ -218,5 +263,6 @@
   <script src="/static/preview.js"></script>
   <script src="/static/moderation.js"></script>
   <script src="/static/music.js"></script>
+  <script src="/static/account.js"></script>
 </body>
 </html>

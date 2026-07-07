@@ -91,6 +91,30 @@ def bot_mute_all():
     return bot_client.mute_all() or {"error": "bot-worker недоступен"}
 
 
+# ---- Вход в Zoom-аккаунт (проксирование в bot-worker) ----
+
+@app.get("/api/bot/account/status")
+def bot_account_status():
+    return bot_client.account_status() or {"error": "bot-worker недоступен"}
+
+
+@app.post("/api/bot/account/sign-in")
+def bot_account_sign_in(payload: dict = Body(...)):
+    email = (payload.get("email") or "").strip()
+    password = payload.get("password") or ""
+    if not email or not password:
+        return JSONResponse({"error": "нужны email и пароль"}, status_code=400)
+    return bot_client.account_sign_in(email, password) or {"error": "bot-worker недоступен"}
+
+
+@app.post("/api/bot/account/otp")
+def bot_account_otp(payload: dict = Body(...)):
+    code = (payload.get("code") or "").strip()
+    if not code:
+        return JSONResponse({"error": "нужен код OTP"}, status_code=400)
+    return bot_client.account_otp(code) or {"error": "bot-worker недоступен"}
+
+
 # ---- Музыка (проксирование в bot-worker) ----
 MUSIC_MAX = 5 * 1024 * 1024  # 5 МБ
 

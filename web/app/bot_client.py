@@ -141,3 +141,35 @@ def music_delete(name: str) -> dict | None:
     except Exception as exc:  # noqa: BLE001
         log.warning("music_delete failed: %s", exc)
         return None
+
+
+# ---- Вход в Zoom-аккаунт ----
+
+def account_status() -> dict | None:
+    try:
+        r = httpx.get(f"{BASE}/account/status", timeout=10)
+        r.raise_for_status()
+        return r.json()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def account_sign_in(email: str, password: str) -> dict | None:
+    try:
+        r = httpx.post(f"{BASE}/account/sign-in",
+                       json={"email": email, "password": password}, timeout=15)
+        r.raise_for_status()
+        return r.json()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("account_sign_in failed: %s", exc)
+        return None
+
+
+def account_otp(code: str) -> dict | None:
+    try:
+        r = httpx.post(f"{BASE}/account/otp", json={"code": code}, timeout=15)
+        r.raise_for_status()
+        return r.json()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("account_otp failed: %s", exc)
+        return None

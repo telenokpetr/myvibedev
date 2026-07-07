@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 from app import gui
+from app.account import account
 from app.chatreader import ChatMessage
 from app.config import config
 from app.moderation import moderator
@@ -50,6 +51,15 @@ class RecordStartRequest(BaseModel):
 
 class VolumeRequest(BaseModel):
     volume: int
+
+
+class SignInRequest(BaseModel):
+    email: str
+    password: str
+
+
+class OtpRequest(BaseModel):
+    code: str
 
 
 @app.get("/health")
@@ -124,6 +134,23 @@ def moderation_test(req: ChatTestRequest):
     if ev is None:
         return {"detected": False}
     return {"detected": True, "event": ev.__dict__}
+
+
+# ---- Вход в Zoom-аккаунт (для веб-формы) ----
+
+@app.get("/account/status")
+def account_status():
+    return account.status()
+
+
+@app.post("/account/sign-in")
+def account_sign_in(req: SignInRequest):
+    return account.sign_in(req.email, req.password)
+
+
+@app.post("/account/otp")
+def account_otp(req: OtpRequest):
+    return account.submit_otp(req.code)
 
 
 # ---- Музыка (виртуальный микрофон): open-source плеер mpv ----

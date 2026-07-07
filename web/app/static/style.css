@@ -120,6 +120,7 @@ button.del:hover { color: var(--err); }
 .pill-scheduled { background: #2a2f4a; color: var(--muted); }
 .pill-joining, .pill-live { background: rgba(79,124,255,.18); color: var(--accent); }
 .pill-recording { background: rgba(231,76,60,.18); color: var(--err); }
+.pill-ok { background: rgba(46,204,113,.18); color: var(--ok); }
 .pill-finished { background: rgba(46,204,113,.15); color: var(--ok); }
 .pill-canceled { background: #2a2f4a; color: var(--muted); }
 .pill-error { background: rgba(231,76,60,.18); color: var(--err); }
