@@ -61,9 +61,13 @@ services:
       - recordings:/data/recordings
       - screenshots:/data/screenshots
       - music:/data/music
+      # Профиль Zoom (логин, «Stay signed in») — чтобы вход переживал пересоздание
+      # контейнера и не требовал OTP каждый раз.
+      - zoomprofile:/home/zoom
 
 volumes:
   db-data:
   recordings:
   screenshots:
   music:
+  zoomprofile:
