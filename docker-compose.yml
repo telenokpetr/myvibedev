@@ -41,6 +41,7 @@ services:
 
   bot-worker:
     build: ./bot-worker
+    image: myvibedev-bot-worker
     restart: unless-stopped
     env_file: .env
     # tini как pid1 — корректно «хоронит» дочерние процессы Zoom (zombie reaping)
@@ -65,9 +66,37 @@ services:
       # контейнера и не требовал OTP каждый раз.
       - zoomprofile:/home/zoom
 
+  # Второй воркер — для модерации второго вебинара параллельно (свой Zoom-клиент,
+  # аккаунт, дисплей, аудио). Тот же образ, отдельные volume.
+  bot-worker-2:
+    image: myvibedev-bot-worker
+    restart: unless-stopped
+    env_file: .env
+    init: true
+    shm_size: "1gb"
+    environment:
+      SCREEN_GEOMETRY: "1920x1080x24"
+      ZOOM_BOT_NAME: "Модератор IPDC @telenokpetr"
+      RECORDINGS_DIR: "/data/recordings"
+      SCREENSHOTS_DIR: "/data/screenshots"
+      WEB_CALLBACK_URL: "http://web:8000"
+    ports:
+      - "9001:9000"
+    depends_on:
+      - web
+    volumes:
+      - recordings-2:/data/recordings
+      - screenshots-2:/data/screenshots
+      - music-2:/data/music
+      - zoomprofile-2:/home/zoom
+
 volumes:
   db-data:
   recordings:
   screenshots:
   music:
   zoomprofile:
+  recordings-2:
+  screenshots-2:
+  music-2:
+  zoomprofile-2:
