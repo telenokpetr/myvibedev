@@ -1,9 +1,10 @@
 """GUI-автоматизация Zoom-клиента через xdotool.
 
-Координаты кликов ВЕРИФИЦИРОВАНЫ вживую на Zoom Workplace 7.1.0 под Xvfb
-1280×720 (см. docs/CALIBRATION.md). Все точки собраны в `COORDS` ниже и привязаны
-к этой геометрии; при другом SCREEN_GEOMETRY их надо пересчитать (масштабирование
-ненадёжно — UI Zoom не тянется линейно), поэтому `_click` предупреждает в лог.
+Деплой работает на Full HD 1920×1080 (docker-compose SCREEN_GEOMETRY). Координаты
+входа в аккаунт и Audio-меню ВЕРИФИЦИРОВАНЫ вживую под 1080p. Часть точек (вход в
+конференцию, Mute All, output volume) ещё на значениях 1280×720 — они в
+`_UNVERIFIED_1080`, и `_click` предупреждает при их использовании. См.
+docs/CALIBRATION.md.
 """
 
 import logging
@@ -18,28 +19,38 @@ log = logging.getLogger("gui")
 
 ENV = {**os.environ, "DISPLAY": config.display}
 
-# Опорная геометрия, под которую верифицированы координаты (docs/CALIBRATION.md).
-_REF_GEOMETRY = (1280, 720)
+# Опорная геометрия деплоя (docker-compose SCREEN_GEOMETRY).
+_REF_GEOMETRY = (1920, 1080)
 
-# Верифицированные вживую координаты кликов (x, y) для 1280×720.
+# Координаты кликов (x, y). Верифицированы под 1920×1080, кроме перечисленных в
+# _UNVERIFIED_1080 (те ещё на значениях 1280×720).
 COORDS = {
-    # Вход в конференцию (§1)
+    # Вход в аккаунт Zoom — экран логина клиента (верифицировано 1080p)
+    "signin_button": (817, 583),
+    "email_field": (817, 503),
+    "email_next": (817, 559),
+    "password_field": (817, 531),
+    "stay_signed_in": (647, 580),
+    "signin_submit": (817, 634),
+    "otp_field": (700, 400),         # ОЦЕНКА — уточнить когда реально появится OTP
+    # Audio-меню (верифицировано 1080p)
+    "original_sound": (540, 769),    # «Original sound for musicians»
+    # Вход в конференцию — ещё 720p, не выверено под 1080p
     "join_with_audio": (637, 323),   # «Join with Computer Audio»
-    # Вход в аккаунт Zoom (§3)
-    "signin_button": (1045, 32),     # кнопка Sign in в окне
-    "email_field": (498, 324),
-    "email_next": (498, 380),
-    "password_field": (498, 351),
-    "stay_signed_in": (326, 401),
-    "signin_submit": (498, 456),
-    "otp_field": (348, 247),         # первое поле OTP (авто-submit после 6 цифр)
-    # Модерация как хост (§4)
-    "mute_all_panel": (1060, 686),   # «Mute All» внизу панели участников
-    "allow_unmute_check": (399, 421),  # снять «Allow participants to unmute themselves»
-    "mute_all_confirm": (744, 421),  # «Mute All» в диалоге подтверждения
-    # Аудио-настройки (§5)
-    "output_volume_max": (1205, 343),  # ползунок Output volume вправо (=100%)
-    "original_sound": (173, 548),    # «Original sound for musicians» в Audio-меню
+    # Модерация как хост — ещё 720p, не выверено под 1080p
+    "mute_all_panel": (1060, 686),
+    "allow_unmute_check": (399, 421),
+    "mute_all_confirm": (744, 421),
+    # Output volume — ещё 720p, не выверено под 1080p
+    "output_volume_max": (1205, 343),
+}
+
+# Координаты, ещё не перекалиброванные под 1080p (значения 1280×720) — `_click`
+# предупреждает при их использовании, даже если геометрия совпала с опорной.
+_UNVERIFIED_1080 = {
+    "otp_field", "join_with_audio",
+    "mute_all_panel", "allow_unmute_check", "mute_all_confirm",
+    "output_volume_max",
 }
 
 
@@ -59,16 +70,28 @@ def type_text(text: str) -> None:
     _run(["xdotool", "type", "--clearmodifiers", text])
 
 
+def paste_text(text: str) -> None:
+    """Надёжный ввод текста (в т.ч. кириллицы) через буфер обмена: xclip + Ctrl+V.
+    `xdotool type` кириллицу под Xvfb вводит ненадёжно (см. CALIBRATION §4)."""
+    subprocess.run(["xclip", "-selection", "clipboard"], env=ENV,
+                   input=text.encode("utf-8"), timeout=5, check=False)
+    time.sleep(0.3)
+    key("ctrl+v")
+
+
 def move_click(x: int, y: int, button: str = "1") -> None:
     _run(["xdotool", "mousemove", str(x), str(y), "click", button])
 
 
 def _click(name: str, button: str = "1") -> None:
-    """Клик по верифицированной координате из COORDS (см. docs/CALIBRATION.md)."""
+    """Клик по координате из COORDS (см. docs/CALIBRATION.md)."""
     if (config.width, config.height) != _REF_GEOMETRY:
-        log.warning("геометрия %dx%d != опорной 1280x720 — координата '%s' не "
-                    "откалибрована, клик может промахнуться",
-                    config.width, config.height, name)
+        log.warning("геометрия %dx%d != опорной %dx%d — координата '%s' может "
+                    "промахнуться", config.width, config.height,
+                    _REF_GEOMETRY[0], _REF_GEOMETRY[1], name)
+    elif name in _UNVERIFIED_1080:
+        log.warning("координата '%s' ещё не выверена под 1080p (значение 720p) — "
+                    "клик может промахнуться", name)
     x, y = COORDS[name]
     move_click(x, y, button)
 
