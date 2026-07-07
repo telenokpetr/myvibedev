@@ -68,99 +68,129 @@ def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 
+# ---- Проксирование команд к воркеру по slot (0, 1, …) ----
+# slot — какой параллельный вебинар/воркер. По умолчанию 0 (существующий UI).
+UNAVAILABLE = {"error": "bot-worker недоступен"}
+
+
+def _worker(slot: int):
+    return bot_client.get_worker(slot)
+
+
+@app.get("/api/bot/workers")
+def bot_workers():
+    """Сколько воркеров (слотов) доступно — для вкладок в UI."""
+    return {"count": bot_client.worker_count()}
+
+
 @app.get("/api/bot/status")
-def bot_status():
-    """Статус bot-worker (для панели живого просмотра)."""
-    return bot_client.status() or {"status": "unavailable"}
+def bot_status(slot: int = 0):
+    """Статус воркера (для панели живого просмотра)."""
+    w = _worker(slot)
+    return (w.status() if w else None) or {"status": "unavailable"}
 
 
 @app.post("/api/bot/recording/start")
-def bot_recording_start(target: str = "local"):
-    return bot_client.recording_start(target) or {"error": "bot-worker недоступен"}
+def bot_recording_start(target: str = "local", slot: int = 0):
+    w = _worker(slot)
+    return (w.recording_start(target) if w else None) or UNAVAILABLE
 
 
 @app.post("/api/bot/recording/{action}")
-def bot_recording_action(action: str):
+def bot_recording_action(action: str, slot: int = 0):
     if action not in ("pause", "resume", "stop"):
         return JSONResponse({"error": "неизвестное действие"}, status_code=400)
-    return bot_client.recording_action(action) or {"error": "bot-worker недоступен"}
+    w = _worker(slot)
+    return (w.recording_action(action) if w else None) or UNAVAILABLE
 
 
 @app.post("/api/bot/mute-all")
-def bot_mute_all():
-    return bot_client.mute_all() or {"error": "bot-worker недоступен"}
+def bot_mute_all(slot: int = 0):
+    w = _worker(slot)
+    return (w.mute_all() if w else None) or UNAVAILABLE
 
 
-# ---- Вход в Zoom-аккаунт (проксирование в bot-worker) ----
+# ---- Вход в Zoom-аккаунт ----
 
 @app.get("/api/bot/account/status")
-def bot_account_status():
-    return bot_client.account_status() or {"error": "bot-worker недоступен"}
+def bot_account_status(slot: int = 0):
+    w = _worker(slot)
+    return (w.account_status() if w else None) or UNAVAILABLE
 
 
 @app.post("/api/bot/account/sign-in")
-def bot_account_sign_in(payload: dict = Body(...)):
+def bot_account_sign_in(payload: dict = Body(...), slot: int = 0):
     email = (payload.get("email") or "").strip()
     password = payload.get("password") or ""
     if not email or not password:
         return JSONResponse({"error": "нужны email и пароль"}, status_code=400)
-    return bot_client.account_sign_in(email, password) or {"error": "bot-worker недоступен"}
+    w = _worker(slot)
+    return (w.account_sign_in(email, password) if w else None) or UNAVAILABLE
 
 
 @app.post("/api/bot/account/otp")
-def bot_account_otp(payload: dict = Body(...)):
+def bot_account_otp(payload: dict = Body(...), slot: int = 0):
     code = (payload.get("code") or "").strip()
     if not code:
         return JSONResponse({"error": "нужен код OTP"}, status_code=400)
-    return bot_client.account_otp(code) or {"error": "bot-worker недоступен"}
+    w = _worker(slot)
+    return (w.account_otp(code) if w else None) or UNAVAILABLE
 
 
-# ---- Музыка (проксирование в bot-worker) ----
+# ---- Музыка ----
 MUSIC_MAX = 5 * 1024 * 1024  # 5 МБ
 
 
 @app.get("/api/bot/music/status")
-def bot_music_status():
-    return bot_client.music_status() or {"error": "bot-worker недоступен"}
+def bot_music_status(slot: int = 0):
+    w = _worker(slot)
+    return (w.music_status() if w else None) or UNAVAILABLE
 
 
 @app.post("/api/bot/music/volume")
-def bot_music_volume(payload: dict = Body(...)):
+def bot_music_volume(payload: dict = Body(...), slot: int = 0):
     try:
         vol = int(payload.get("volume", 60))
     except (TypeError, ValueError):
         return JSONResponse({"error": "volume должен быть числом"}, status_code=400)
-    return bot_client.music_volume(vol) or {"error": "bot-worker недоступен"}
+    w = _worker(slot)
+    return (w.music_volume(vol) if w else None) or UNAVAILABLE
 
 
 @app.post("/api/bot/music/upload")
-async def bot_music_upload(file: UploadFile = File(...)):
+async def bot_music_upload(file: UploadFile = File(...), slot: int = 0):
     if not (file.filename or "").lower().endswith(".mp3"):
         return JSONResponse({"error": "только .mp3"}, status_code=400)
     data = await file.read()
     if len(data) > MUSIC_MAX:
         return JSONResponse({"error": "файл больше 5 МБ"}, status_code=413)
-    j, code = bot_client.music_upload(file.filename, data)
-    return JSONResponse(j or {"error": "bot-worker недоступен"}, status_code=code)
+    w = _worker(slot)
+    if not w:
+        return JSONResponse(UNAVAILABLE, status_code=502)
+    j, code = w.music_upload(file.filename, data)
+    return JSONResponse(j or UNAVAILABLE, status_code=code)
 
 
 @app.delete("/api/bot/music/tracks/{name}")
-def bot_music_delete(name: str):
-    return bot_client.music_delete(name) or {"error": "bot-worker недоступен"}
+def bot_music_delete(name: str, slot: int = 0):
+    w = _worker(slot)
+    return (w.music_delete(name) if w else None) or UNAVAILABLE
 
 
 @app.post("/api/bot/music/{action}")
-def bot_music_action(action: str):
+def bot_music_action(action: str, slot: int = 0):
     if action not in ("start", "stop", "pause", "resume", "next", "prev"):
         return JSONResponse({"error": "неизвестное действие"}, status_code=400)
-    return bot_client.music_action(action) or {"error": "bot-worker недоступен"}
+    w = _worker(slot)
+    return (w.music_action(action) if w else None) or UNAVAILABLE
 
 
 @app.post("/api/bot/moderation/test")
-def bot_moderation_test(payload: dict = Body(...)):
+def bot_moderation_test(payload: dict = Body(...), slot: int = 0):
     sender = payload.get("sender") or "Тест"
     text_ = payload.get("text") or ""
-    return bot_client.moderation_test(sender, text_) or {"error": "bot-worker недоступен"}
+    w = _worker(slot)
+    return (w.moderation_test(sender, text_) if w else None) or UNAVAILABLE
 
 
 @app.post("/api/internal/moderation")
