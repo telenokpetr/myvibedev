@@ -1,3 +1,43 @@
+// --- Мультиворкер: активный вебинар (slot). Патчим fetch, чтобы все /api/bot/*
+// автоматически шли на текущий воркер. Вкладка меняет slot и шлёт "slotchange". ---
+window.currentSlot = 0;
+(function () {
+  const orig = window.fetch.bind(window);
+  window.fetch = function (url, opts) {
+    if (typeof url === "string" && url.startsWith("/api/bot/") && !/[?&]slot=/.test(url)) {
+      url += (url.includes("?") ? "&" : "?") + "slot=" + window.currentSlot;
+    }
+    return orig(url, opts);
+  };
+})();
+
+function setSlot(n) {
+  if (n === window.currentSlot) return;
+  window.currentSlot = n;
+  document.querySelectorAll("#webinar-tabs .tab").forEach((t) =>
+    t.classList.toggle("active", Number(t.dataset.slot) === n));
+  window.dispatchEvent(new CustomEvent("slotchange", { detail: n }));
+}
+
+(async function buildTabs() {
+  const nav = document.getElementById("webinar-tabs");
+  if (!nav) return;
+  let count = 2;
+  try {
+    const j = await (await fetch("/api/bot/workers")).json();
+    count = j.count || 2;
+  } catch (e) { /* дефолт 2 */ }
+  nav.innerHTML = "";
+  for (let i = 0; i < count; i++) {
+    const b = document.createElement("button");
+    b.className = "tab" + (i === 0 ? " active" : "");
+    b.dataset.slot = String(i);
+    b.textContent = "Вебинар " + (i + 1);
+    b.addEventListener("click", () => setSlot(i));
+    nav.appendChild(b);
+  }
+})();
+
 const STATUS_LABELS = {
   scheduled: "запланировано",
   joining: "подключается",

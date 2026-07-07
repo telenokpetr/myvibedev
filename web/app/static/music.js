@@ -142,5 +142,10 @@ MU.tracks.addEventListener("click", async (e) => {
   } catch (e2) { /* игнор */ }
 });
 
+window.addEventListener("slotchange", () => {
+  MU.uploadMsg.textContent = "";
+  loadMusic();
+});
+
 loadMusic();
 setInterval(loadMusic, 4000);

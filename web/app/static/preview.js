@@ -11,9 +11,10 @@ const BOT_LABELS = {
   unavailable: "воркер недоступен",
 };
 
-const wsUrl =
-  (location.protocol === "https:" ? "wss" : "ws") +
-  "://" + location.host + "/api/preview";
+function previewWsUrl() {
+  return (location.protocol === "https:" ? "wss" : "ws") +
+    "://" + location.host + "/api/preview?slot=" + window.currentSlot;
+}
 
 const canvas = document.getElementById("preview-canvas");
 const overlay = document.getElementById("preview-overlay");
@@ -28,7 +29,7 @@ let soundOn = false;
 function startPreview() {
   overlay.style.display = "flex";
   overlay.textContent = "подключение…";
-  player = new JSMpeg.Player(wsUrl, {
+  player = new JSMpeg.Player(previewWsUrl(), {
     canvas: canvas,
     audio: true,
     autoplay: true,
@@ -149,6 +150,13 @@ async function pollBot() {
     statePill.className = "pill pill-error";
   }
 }
+
+// Смена вебинара: гасим просмотр (это другой воркер) и перечитываем статус.
+window.addEventListener("slotchange", () => {
+  if (player) stopPreview();
+  muteAllBtn.textContent = "🔇 Отключить звук всем";
+  pollBot();
+});
 
 setInterval(pollBot, 3000);
 pollBot();

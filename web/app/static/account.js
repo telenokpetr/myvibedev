@@ -136,5 +136,11 @@ AC.nickSave.addEventListener("click", () => {
   setTimeout(() => { AC.nickMsg.textContent = ""; }, 2000);
 });
 
+window.addEventListener("slotchange", () => {
+  AC.msg.textContent = "";
+  AC.otpMsg.textContent = "";
+  loadAcc();
+});
+
 loadAcc();
 setInterval(loadAcc, 4000);

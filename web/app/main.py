@@ -238,10 +238,18 @@ def moderation_events(limit: int = 50):
 
 @app.websocket("/api/preview")
 async def preview_proxy(ws: WebSocket):
-    """Проксируем A/V-поток bot-worker в браузер (единый origin)."""
+    """Проксируем A/V-поток нужного воркера (по ?slot=) в браузер (единый origin)."""
     await ws.accept()
+    try:
+        slot = int(ws.query_params.get("slot", "0"))
+    except ValueError:
+        slot = 0
+    worker = bot_client.get_worker(slot)
+    if worker is None:
+        await ws.close()
+        return
     upstream = (
-        settings.bot_worker_url.replace("http://", "ws://").replace("https://", "wss://")
+        worker.base.replace("http://", "ws://").replace("https://", "wss://")
         + "/preview"
     )
     try:
