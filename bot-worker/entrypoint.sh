@@ -26,8 +26,21 @@ echo "[entrypoint] оконный менеджер openbox"
 openbox &
 
 echo "[entrypoint] звук: PulseAudio + виртуальные устройства"
+# Чистим протухший pid/сокет PulseAudio: XDG_RUNTIME_DIR лежит в /tmp и переживает
+# `docker restart` (в отличие от recreate). Устаревший pid от прошлого запуска мешает
+# демону подняться (иногда pid переиспользован другим процессом) — и тогда весь звук
+# (музыка, микрофон, запись) молчит. Убираем стухшие файлы до старта.
+pulseaudio --kill 2>/dev/null || true
+rm -f "${XDG_RUNTIME_DIR}/pulse/pid" "${XDG_RUNTIME_DIR}/pulse/native" 2>/dev/null || true
 pulseaudio -D --exit-idle-time=-1 --log-target=stderr 2>/dev/null || true
 sleep 1
+# Подстраховка: если демон всё же не поднялся — пробуем ещё раз после доп. очистки.
+if ! pulseaudio --check 2>/dev/null; then
+    echo "[entrypoint] PulseAudio не поднялся с первого раза — чистим и повторяем"
+    rm -f "${XDG_RUNTIME_DIR}/pulse/pid" "${XDG_RUNTIME_DIR}/pulse/native" 2>/dev/null || true
+    pulseaudio -D --exit-idle-time=-1 --log-target=stderr 2>/dev/null || true
+    sleep 1
+fi
 # Виртуальный «динамик»: сюда Zoom выводит звук митинга, его же и записываем.
 pactl load-module module-null-sink sink_name=vspeaker \
     sink_properties=device.description=vspeaker 2>/dev/null || true
