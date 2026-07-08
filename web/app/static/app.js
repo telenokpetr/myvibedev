@@ -81,9 +81,11 @@ async function loadEvents() {
       return;
     }
     tbody.innerHTML = items.map((e) => {
-      const name = e.title
+      const nameInner = e.title
         ? esc(e.title)
         : `<a href="${esc(e.join_url)}" target="_blank" rel="noopener">${esc(shortUrl(e.join_url))}</a>`;
+      const slotBadge = `<span class="pill" title="Вебинар (воркер)">В${(e.worker_slot ?? 0) + 1}</span> `;
+      const name = slotBadge + nameInner;
       return `
       <tr>
         <td>${fmtDate(e.start_time)}</td>
@@ -151,6 +153,7 @@ form.addEventListener("submit", async (e) => {
     passcode: f.passcode.value.trim() || null,
     host_key: f.host_key.value.trim() || null,
     duration_min: Number(f.duration_min.value),
+    worker_slot: Number(f.worker_slot.value),
     record: f.record.checked,
     moderate: f.moderate.checked,
     start_now: isNow,

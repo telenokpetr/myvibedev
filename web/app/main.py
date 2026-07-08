@@ -24,6 +24,12 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 async def lifespan(app: FastAPI):
     # Создаём таблицы при старте (для прод — заменим на Alembic-миграции).
     Base.metadata.create_all(bind=engine)
+    # Лёгкая миграция: добавить worker_slot в уже существующую таблицу events.
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE events ADD COLUMN IF NOT EXISTS worker_slot "
+            "INTEGER NOT NULL DEFAULT 0"
+        ))
     scheduler.start()
     yield
     scheduler.stop()

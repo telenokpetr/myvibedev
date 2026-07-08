@@ -13,6 +13,7 @@ class EventBase(BaseModel):
     duration_min: int = Field(default=60, ge=1, le=1440)
     record: bool = False
     moderate: bool = True
+    worker_slot: int = Field(default=0, ge=0, le=9, description="Слот воркера (вебинар)")
 
 
 class EventCreate(EventBase):
@@ -38,6 +39,7 @@ class EventUpdate(BaseModel):
     duration_min: int | None = Field(default=None, ge=1, le=1440)
     record: bool | None = None
     moderate: bool | None = None
+    worker_slot: int | None = Field(default=None, ge=0, le=9)
     status: EventStatus | None = None
 
 

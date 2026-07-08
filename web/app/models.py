@@ -41,6 +41,9 @@ class Event(Base):
     record: Mapped[bool] = mapped_column(Boolean, default=False)
     moderate: Mapped[bool] = mapped_column(Boolean, default=True)
 
+    # На каком воркере (слоте) вести мероприятие — для параллельных вебинаров.
+    worker_slot: Mapped[int] = mapped_column(Integer, default=0, index=True)
+
     status: Mapped[EventStatus] = mapped_column(
         Enum(EventStatus, native_enum=False, length=20),
         default=EventStatus.scheduled,

@@ -73,7 +73,9 @@ def stop_event(event_id: int, db: Session = Depends(get_db)):
     event = db.get(models.Event, event_id)
     if event is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Мероприятие не найдено")
-    bot_client.leave()
+    worker = bot_client.get_worker(event.worker_slot)
+    if worker:
+        worker.leave()
     event.status = models.EventStatus.finished
     db.commit()
     db.refresh(event)

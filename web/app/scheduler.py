@@ -30,52 +30,65 @@ ACTIVE = (
 _SYNC = {"joining", "claiming", "live", "recording", "error"}
 
 
-def _active_event(db):
+def _active_events(db):
     stmt = select(models.Event).where(models.Event.status.in_(ACTIVE))
-    return db.scalars(stmt).first()
+    return list(db.scalars(stmt))
 
 
-def _due_event(db, now):
+def _due_events(db, now):
     stmt = (
         select(models.Event)
         .where(models.Event.status == EventStatus.scheduled)
         .where(models.Event.start_time <= now)
         .order_by(models.Event.start_time)
     )
-    return db.scalars(stmt).first()
+    return list(db.scalars(stmt))
 
 
 def tick():
+    """Один тик: по каждому слоту — не более одного активного мероприятия.
+    Параллельные вебинары идут на разных слотах (воркерах)."""
     db = SessionLocal()
     try:
         now = datetime.now(timezone.utc)
-        active = _active_event(db)
+        busy_slots: set[int] = set()
 
-        if active:
-            end = active.start_time + timedelta(minutes=active.duration_min)
-            st = bot_client.status()
-
-            # Завершение по времени или если воркер уже не в сессии.
+        # 1) Синхронизируем/завершаем активные мероприятия (по одному на слот).
+        for ev in _active_events(db):
+            slot = ev.worker_slot
+            worker = bot_client.get_worker(slot)
+            end = ev.start_time + timedelta(minutes=ev.duration_min)
+            st = worker.status() if worker else None
             worker_done = st is not None and st.get("status") in ("idle", "finished")
-            if now >= end or worker_done:
-                bot_client.leave()
-                active.status = EventStatus.finished
-                log.info("мероприятие #%s завершено", active.id)
-            elif st and st.get("status") in _SYNC:
-                active.status = EventStatus(st["status"])
-            db.commit()
-            return  # одно активное за раз
+            if now >= end or worker_done or worker is None:
+                if worker:
+                    worker.leave()
+                ev.status = EventStatus.finished
+                log.info("мероприятие #%s (слот %s) завершено", ev.id, slot)
+            else:
+                if st and st.get("status") in _SYNC:
+                    ev.status = EventStatus(st["status"])
+                busy_slots.add(slot)
+        db.commit()
 
-        due = _due_event(db, now)
-        if due:
-            log.info("запускаю мероприятие #%s: %s", due.id, due.join_url)
-            due.status = EventStatus.joining
+        # 2) Запускаем подошедшие мероприятия на свободных слотах.
+        for ev in _due_events(db, now):
+            slot = ev.worker_slot
+            if slot in busy_slots:
+                continue  # слот занят другим вебинаром — ждём следующего тика
+            worker = bot_client.get_worker(slot)
+            if worker is None:
+                continue
+            log.info("запускаю мероприятие #%s на слоте %s: %s", ev.id, slot, ev.join_url)
+            ev.status = EventStatus.joining
             db.commit()
-            result = bot_client.join(due)
+            result = worker.join(ev)
             if result == "busy":
-                due.status = EventStatus.scheduled  # попробуем на следующем тике
+                ev.status = EventStatus.scheduled
             elif result == "error":
-                due.status = EventStatus.error
+                ev.status = EventStatus.error
+            else:
+                busy_slots.add(slot)
             db.commit()
     except Exception as exc:  # noqa: BLE001
         log.exception("ошибка тика планировщика: %s", exc)
