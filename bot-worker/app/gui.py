@@ -43,6 +43,13 @@ COORDS = {
     "mute_all_confirm": (744, 421),
     # Output volume — ещё 720p, не выверено под 1080p
     "output_volume_max": (1205, 343),
+    # Облачная запись — закреплённая кнопка Record в панели (верифицировано вживую
+    # 8 июля под 1080p, полноэкранное окно митинга, права со-хоста).
+    "record_button": (1210, 1045),        # кнопка Record в нижней панели
+    "rec_cloud_option": (1242, 958),      # «Record to the cloud» (когда не пишет)
+    "rec_stop_option": (1270, 939),       # «Stop recording» (когда пишет)
+    "rec_pause_option": (1270, 987),      # «Pause/Resume recording» (когда пишет)
+    "rec_stop_confirm_yes": (1082, 688),  # «Yes» в диалоге подтверждения стопа
 }
 
 # Координаты, ещё не перекалиброванные под 1080p (значения 1280×720) — `_click`
@@ -301,21 +308,48 @@ def enable_original_sound() -> None:
     _click("original_sound")
 
 
-# ---- Облачная запись Zoom: недоступна (§3) ----
-# Аккаунт Free → облачной записи нет. Используется локальный ffmpeg (recording.py),
-# поэтому все функции ниже — осознанные no-op, а не «недокалибровано».
+# ---- Облачная запись Zoom (как со-хост в лицензированном митинге) ----
+# Управление через закреплённую кнопку Record в нижней панели. Кнопка — единая
+# точка: не пишет → меню «Record to this computer / Record to the cloud»; пишет →
+# «Stop / Pause recording». Стоп требует подтверждения «Yes». Координаты сняты
+# вживую 8 июля (1080p, полноэкранное окно). Требует прав со-хоста и лицензии
+# Cloud Recording у хост-аккаунта. Возвращают True оптимистично (клик выполнен) —
+# фактический статус клиент показывает индикатором «REC».
+
+def _open_record_menu() -> None:
+    """Развернуть окно, показать авто-скрывающуюся панель и открыть меню Record."""
+    maximize_meeting_window()
+    move_mouse_center()          # движение мышью показывает нижнюю панель
+    time.sleep(0.6)
+    _click("record_button")
+    time.sleep(1.0)
+
 
 def start_cloud_recording() -> bool:
-    return False
+    """Старт облачной записи: Record → «Record to the cloud»."""
+    _open_record_menu()
+    _click("rec_cloud_option")
+    return True
 
 
 def pause_cloud_recording() -> bool:
-    return False
+    """Пауза: Record → «Pause recording»."""
+    _open_record_menu()
+    _click("rec_pause_option")
+    return True
 
 
 def resume_cloud_recording() -> bool:
-    return False
+    """Возобновление: Record → «Resume recording» (та же позиция, что и Pause)."""
+    _open_record_menu()
+    _click("rec_pause_option")
+    return True
 
 
 def stop_cloud_recording() -> bool:
-    return False
+    """Стоп: Record → «Stop recording» → подтвердить «Yes» в диалоге."""
+    _open_record_menu()
+    _click("rec_stop_option")
+    time.sleep(1.0)
+    _click("rec_stop_confirm_yes")
+    return True

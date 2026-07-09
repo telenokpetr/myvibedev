@@ -160,3 +160,18 @@ window.addEventListener("slotchange", () => {
 
 setInterval(pollBot, 3000);
 pollBot();
+
+// Статус записи — отдельное автообновление раз в 30 секунд с отметкой времени.
+const recUpdated = document.getElementById("rec-updated");
+async function refreshRecordingStatus() {
+  try {
+    const r = await fetch("/api/bot/status");
+    const j = await r.json();
+    renderRecording(j.recording);
+    if (recUpdated) recUpdated.textContent = "обновлено " + new Date().toLocaleTimeString();
+  } catch (e) {
+    if (recUpdated) recUpdated.textContent = "нет связи";
+  }
+}
+setInterval(refreshRecordingStatus, 30000);
+refreshRecordingStatus();
