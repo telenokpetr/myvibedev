@@ -192,8 +192,8 @@ button.run:hover { color: var(--ok); }
 .preview-wrap {
   position: relative;
   width: 100%;
-  max-width: 480px;
-  aspect-ratio: 3 / 2;
+  max-width: 800px;
+  aspect-ratio: 16 / 9;
   margin: 0.75rem 0;
   background: #000;
   border-radius: 10px;
