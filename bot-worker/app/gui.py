@@ -43,12 +43,14 @@ COORDS = {
     "mute_all_confirm": (744, 421),
     # Output volume — ещё 720p, не выверено под 1080p
     "output_volume_max": (1205, 343),
-    # Облачная запись — закреплённая кнопка Record в панели (верифицировано вживую
-    # 8 июля под 1080p, полноэкранное окно митинга, права со-хоста).
-    "record_button": (1210, 1045),        # кнопка Record в нижней панели
-    "rec_cloud_option": (1242, 958),      # «Record to the cloud» (когда не пишет)
-    "rec_stop_option": (1270, 939),       # «Stop recording» (когда пишет)
-    "rec_pause_option": (1270, 987),      # «Pause/Resume recording» (когда пишет)
+    # Облачная запись (верифицировано вживую 8 июля, 1080p, полноэкранное окно):
+    # старт — через меню Alt+R; стоп/пауза — через клик по индикатору «REC» вверху,
+    # который открывает меню на стабильных позициях (НЕ зависит от плавающего тулбара,
+    # где кнопка Record гуляет и рушит клик).
+    "rec_indicator": (955, 172),          # верхний «☁ REC» → меню Stop/Pause
+    "rec_cloud_option": (510, 803),       # «Record to the cloud» в меню Alt+R
+    "rec_stop_option": (816, 243),        # «Stop recording» в меню REC-индикатора
+    "rec_pause_option": (816, 291),       # «Pause/Resume recording» там же
     "rec_stop_confirm_yes": (1082, 688),  # «Yes» в диалоге подтверждения стопа
 }
 
@@ -193,6 +195,12 @@ def move_mouse_center() -> None:
     _run(["xdotool", "mousemove", str(config.width // 2), str(config.height // 2)])
 
 
+def move_mouse_top() -> None:
+    """Двигаем мышь к верхней кромке — так всплывает верхняя панель с индикатором
+    записи «REC» (позиция стабильна, не зависит от плавающего нижнего тулбара)."""
+    _run(["xdotool", "mousemove", str(config.width // 2), "20"])
+
+
 # ---- Сценарии (координаты верифицированы вживую, docs/CALIBRATION.md) ----
 
 def dismiss_startup_dialogs() -> None:
@@ -316,39 +324,53 @@ def enable_original_sound() -> None:
 # Cloud Recording у хост-аккаунта. Возвращают True оптимистично (клик выполнен) —
 # фактический статус клиент показывает индикатором «REC».
 
-def _open_record_menu() -> None:
-    """Развернуть окно, показать авто-скрывающуюся панель и открыть меню Record."""
+def _open_rec_indicator_menu() -> None:
+    """Открыть меню Stop/Pause кликом по верхнему индикатору «REC».
+
+    Индикатор в верхней панели на стабильной позиции — в отличие от кнопки Record в
+    нижнем тулбаре, которая гуляет (закреплена/не закреплена, чат открыт и т.п.) и
+    из-за этого раньше клик промахивался.
+    """
     maximize_meeting_window()
-    move_mouse_center()          # движение мышью показывает нижнюю панель
-    time.sleep(0.6)
-    _click("record_button")
+    move_mouse_top()             # показать верхнюю панель с индикатором записи
+    time.sleep(0.4)
+    _click("rec_indicator")
     time.sleep(1.0)
 
 
 def start_cloud_recording() -> bool:
-    """Старт облачной записи: Record → «Record to the cloud»."""
-    _open_record_menu()
-    _click("rec_cloud_option")
+    """Старт облачной записи: Alt+R открывает меню выбора → «Record to the cloud».
+
+    Alt+R (при доступных обоих вариантах записи) показывает меню computer/cloud на
+    стабильной позиции у нижне-левого угла развёрнутого окна. Alt+C (прямой шорткат
+    облака) в этом билде Zoom не срабатывает, поэтому идём через Alt+R + клик.
+    """
+    maximize_meeting_window()
+    move_mouse_center()          # фокус окна + показать интерфейс
+    time.sleep(0.4)
+    key("alt+r")                 # меню записи (Record to this computer / to the cloud)
+    time.sleep(1.2)
+    _click("rec_cloud_option")   # «Record to the cloud»
     return True
 
 
 def pause_cloud_recording() -> bool:
-    """Пауза: Record → «Pause recording»."""
-    _open_record_menu()
+    """Пауза: клик по «REC» → «Pause recording»."""
+    _open_rec_indicator_menu()
     _click("rec_pause_option")
     return True
 
 
 def resume_cloud_recording() -> bool:
-    """Возобновление: Record → «Resume recording» (та же позиция, что и Pause)."""
-    _open_record_menu()
+    """Возобновление: клик по «REC» → «Resume recording» (та же позиция, что и Pause)."""
+    _open_rec_indicator_menu()
     _click("rec_pause_option")
     return True
 
 
 def stop_cloud_recording() -> bool:
-    """Стоп: Record → «Stop recording» → подтвердить «Yes» в диалоге."""
-    _open_record_menu()
+    """Стоп: клик по «REC» → «Stop recording» → подтвердить «Yes» в диалоге."""
+    _open_rec_indicator_menu()
     _click("rec_stop_option")
     time.sleep(1.0)
     _click("rec_stop_confirm_yes")
