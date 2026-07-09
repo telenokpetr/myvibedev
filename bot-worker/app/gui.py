@@ -110,6 +110,26 @@ def zoom_window_titles() -> list[str]:
     return titles
 
 
+# Заголовок окна активной конференции в этой версии Zoom — ровно «Meeting»
+# (превью называется темой митинга, лобби/диалоги — «Zoom Workplace»). Проверено
+# вживую 8 июля 2026, см. docs/CALIBRATION.md §7.
+_MEETING_TITLE_RE = re.compile(r"^(zoom )?meeting$", re.I)
+
+
+def find_meeting_window() -> str | None:
+    """WID окна активной конференции (заголовок «Meeting»), либо None.
+
+    Отличает реальный вход от превью/лобби/главного окна по ЗАГОЛОВКУ, а не по
+    размеру: главное окно «Zoom Workplace» тоже развёрнуто и раньше давало ложный
+    вход ещё до подключения (баг «слепой state machine», CALIBRATION §7).
+    """
+    for wid in find_zoom_windows():
+        title = _run(["xdotool", "getwindowname", wid]).stdout.strip()
+        if _MEETING_TITLE_RE.match(title):
+            return wid
+    return None
+
+
 def activate_meeting_window() -> str | None:
     """Активируем окно митинга (обычно самое большое окно Zoom) и максимизируем."""
     wins = find_zoom_windows()
@@ -122,6 +142,17 @@ def activate_meeting_window() -> str | None:
     return wid
 
 
+def maximize_meeting_window() -> str | None:
+    """Развернуть окно активной конференции на весь экран (после подтверждённого
+    входа). Нацеливается на реальное окно «Meeting», а не на превью/главное окно."""
+    wid = find_meeting_window()
+    if wid is None:
+        return None
+    _run(["xdotool", "windowactivate", "--sync", wid])
+    _run(["wmctrl", "-i", "-r", wid, "-b", "add,maximized_vert,maximized_horz"])
+    return wid
+
+
 def _window_size(wid: str) -> tuple[int, int] | None:
     out = _run(["xdotool", "getwindowgeometry", wid]).stdout
     m = re.search(r"Geometry:\s*(\d+)x(\d+)", out)
@@ -129,20 +160,15 @@ def _window_size(wid: str) -> tuple[int, int] | None:
 
 
 def verify_in_meeting(min_ratio: float = 0.6) -> bool:
-    """True, если бот реально в окне митинга, а не завис на диалоге ошибки/ожидания.
+    """True, если бот реально в конференции (не на превью / в лобби / на диалоге).
 
-    Верификация без OCR (см. баг «слепой state machine» в docs/CALIBRATION.md §7):
-    окно конференции развёрнуто почти на весь экран, а диалоги «Invalid meeting ID»
-    / «Waiting for host» — маленькие. Считаем входом наличие Zoom-окна шириной и
-    высотой >= min_ratio экрана.
+    Признак — окно с заголовком активной конференции («Meeting»). Раньше вход
+    определялся по РАЗМЕРУ окна, но главное окно «Zoom Workplace» и экран превью
+    тоже развёрнуты почти на весь экран → давали ложный вход ещё до подключения
+    (баг «слепой state machine», docs/CALIBRATION.md §7). Заголовок надёжнее.
+    `min_ratio` больше не используется (оставлен для совместимости вызова).
     """
-    min_w = config.width * min_ratio
-    min_h = config.height * min_ratio
-    for wid in find_zoom_windows():
-        size = _window_size(wid)
-        if size and size[0] >= min_w and size[1] >= min_h:
-            return True
-    return False
+    return find_meeting_window() is not None
 
 
 def wait_in_meeting(timeout: float = 40.0, interval: float = 2.0) -> bool:

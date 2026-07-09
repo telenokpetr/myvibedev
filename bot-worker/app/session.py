@@ -79,6 +79,8 @@ class SessionManager:
                 return
             self._state.status = "live"
             self._log("бот в конференции")
+            # Разворачиваем реальное окно конференции на весь экран.
+            gui.maximize_meeting_window()
 
             if host_key:
                 self._state.status = "claiming"

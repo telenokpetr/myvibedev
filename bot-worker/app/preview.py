@@ -13,9 +13,9 @@ from app.config import config
 
 ENV = {**os.environ, "DISPLAY": config.display}
 
-# Размер окна превью (небольшое, чтобы щадить CPU).
-PREVIEW_WIDTH = int(os.environ.get("PREVIEW_WIDTH", "480"))
-PREVIEW_HEIGHT = int(os.environ.get("PREVIEW_HEIGHT", "320"))
+# Размер окна превью (16:9 под источник 1920x1080, небольшое — щадим CPU).
+PREVIEW_WIDTH = int(os.environ.get("PREVIEW_WIDTH", "800"))
+PREVIEW_HEIGHT = int(os.environ.get("PREVIEW_HEIGHT", "450"))
 # MPEG-1 допускает только 24/25/30 fps — 15 нельзя.
 PREVIEW_FPS = os.environ.get("PREVIEW_FPS", "25")
 
@@ -28,14 +28,22 @@ class PreviewStreamer:
         self._lock = asyncio.Lock()
 
     def _cmd(self) -> list[str]:
+        # Аудио превью = микс двух мониторов: vspeaker.monitor (что бот СЛЫШИТ,
+        # голоса участников) + vmic.monitor (что бот ОТДАЁТ, его музыка/микрофон).
+        # Так оператор слышит полный «эфир». normalize=0 — не резать громкость вдвое.
         return [
             "ffmpeg", "-loglevel", "error",
             "-thread_queue_size", "512",
             "-f", "x11grab",
             "-video_size", f"{config.width}x{config.height}",
-            "-framerate", PREVIEW_FPS, "-i", config.display,
+            "-framerate", PREVIEW_FPS, "-i", config.display,       # 0:v — экран
             "-thread_queue_size", "512",
-            "-f", "pulse", "-i", "vspeaker.monitor",
+            "-f", "pulse", "-i", "vspeaker.monitor",               # 1:a — звук митинга
+            "-thread_queue_size", "512",
+            "-f", "pulse", "-i", "vmic.monitor",                   # 2:a — музыка/микрофон бота
+            "-filter_complex",
+            "[1:a][2:a]amix=inputs=2:duration=longest:normalize=0[aout]",
+            "-map", "0:v", "-map", "[aout]",
             "-f", "mpegts",
             "-codec:v", "mpeg1video",
             "-s", f"{PREVIEW_WIDTH}x{PREVIEW_HEIGHT}",
