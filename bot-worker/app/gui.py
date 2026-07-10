@@ -36,8 +36,10 @@ COORDS = {
     "join_meeting": (1229, 945),     # «Join» на экране preview (верифиц. 1080p)
     "join_with_audio": (637, 323),   # «Join with Computer Audio» — калибровать 1080p
     # Audio-настройки (§5)
-    "audio_menu_caret": (444, 900),  # каретка ^ у кнопки Audio (верифиц. 1080p)
-    "original_sound": (540, 769),    # «Original sound for musicians» (верифиц. 1080p)
+    # ВНИМАНИЕ: координаты тулбара/меню — для ПОЛНОЭКРАННОГО окна 1920×1080
+    # (maximize_meeting_window принудительно приводит окно к этому размеру).
+    "audio_menu_caret": (78, 1040),  # каретка ^ у кнопки Audio (fullscreen, верифиц.)
+    "original_sound": (174, 909),    # «Original sound for musicians» (fullscreen, верифиц.)
     "output_volume_max": (1205, 343),
     # Модерация как хост (§4) — калибровать 1080p
     "mute_all_panel": (1060, 686),
@@ -148,13 +150,19 @@ def activate_meeting_window() -> str | None:
 
 
 def maximize_meeting_window() -> str | None:
-    """Развернуть окно активной конференции на весь экран (после подтверждённого
-    входа). Нацеливается на реальное окно «Meeting», а не на превью/главное окно."""
+    """Развернуть окно конференции РОВНО на весь экран (детерминированно).
+
+    Важно: раскладка нижнего тулбара зависит от размера окна (плавающее 1188×800 vs
+    полноэкранное 1920×1080) → фикс-координаты меню аудио промахиваются. Поэтому
+    принудительно приводим окно к полному экрану (windowsize+move), а не полагаемся
+    только на wmctrl maximize, который срабатывает не всегда."""
     wid = find_meeting_window()
     if wid is None:
         return None
     _run(["xdotool", "windowactivate", "--sync", wid])
     _run(["wmctrl", "-i", "-r", wid, "-b", "add,maximized_vert,maximized_horz"])
+    _run(["xdotool", "windowsize", wid, str(config.width), str(config.height)])
+    _run(["xdotool", "windowmove", wid, "0", "0"])
     return wid
 
 
