@@ -36,7 +36,7 @@ COORDS = {
     "join_meeting": (1229, 945),     # «Join» на экране preview (верифиц. 1080p)
     "join_with_audio": (637, 323),   # «Join with Computer Audio» — калибровать 1080p
     # Audio-настройки (§5)
-    "audio_menu_caret": (455, 1013), # каретка ^ у кнопки Audio — калибровать 1080p
+    "audio_menu_caret": (444, 900),  # каретка ^ у кнопки Audio (верифиц. 1080p)
     "original_sound": (540, 769),    # «Original sound for musicians» (верифиц. 1080p)
     "output_volume_max": (1205, 343),
     # Модерация как хост (§4) — калибровать 1080p
@@ -53,7 +53,7 @@ COORDS = {
 
 # Координаты, ещё не выверенные под 1080p — `_click` предупреждает при использовании.
 _UNVERIFIED = {
-    "otp_field", "join_with_audio", "audio_menu_caret",
+    "otp_field", "join_with_audio",
     "mute_all_panel", "allow_unmute_check", "mute_all_confirm",
     "output_volume_max",
 }
