@@ -352,42 +352,40 @@ def set_output_volume_max() -> None:
     _click("output_volume_max")
 
 
-def _audio_menu_open() -> bool:
-    """OCR-проверка, что меню аудио раскрыто (видны его заголовки)."""
-    t = _ocr_screen()
-    return "microphone modes" in t or "select a microphone" in t
+def _original_sound_on() -> bool:
+    """OCR-проверка баннера подтверждения включения Original sound."""
+    return "original sound for musicians is on" in _ocr_screen()
 
 
-def open_audio_menu(retries: int = 3) -> bool:
-    """Открыть меню аудио (каретка ^ у кнопки Audio) с проверкой и ретраями.
-
-    Тулбар авто-прячется, поэтому перед кликом будим его движением мыши у нижней
-    кромки; после клика OCR-проверяем, что меню раскрылось, иначе повторяем."""
-    maximize_meeting_window()
-    time.sleep(1.5)                  # дать интерфейсу митинга осесть после входа
-    for _ in range(retries):
-        # разбудить нижний тулбар
-        _run(["xdotool", "mousemove", str(config.width // 2), str(config.height - 3)])
-        time.sleep(0.5)
-        _run(["xdotool", "mousemove", str(config.width // 2), str(config.height - 45)])
-        time.sleep(0.6)
-        _click("audio_menu_caret")
-        time.sleep(1.2)
-        if _audio_menu_open():
-            return True
-    return False
-
-
-def enable_original_sound() -> None:
-    """Включить «Original sound for musicians» — иначе шумодав режет музыку (§5).
-    Надёжно открывает меню (с проверкой) и кликает пункт. Zoom запоминает выбор.
-    """
-    if not open_audio_menu():
-        log.warning("enable_original_sound: меню аудио не открылось после ретраев")
-        return
-    _click("original_sound")
+def _reveal_toolbar() -> None:
+    """Разбудить нижний тулбар движением мыши у самой кромки экрана."""
+    _run(["xdotool", "mousemove", str(config.width // 2), str(config.height - 3)])
+    time.sleep(0.5)
+    _run(["xdotool", "mousemove", str(config.width // 2), str(config.height - 45)])
     time.sleep(0.6)
-    key("Escape")                    # закрыть меню, если осталось открытым
+
+
+def enable_original_sound(retries: int = 3) -> bool:
+    """Включить «Original sound for musicians» — иначе шумодав режет музыку (§5).
+
+    Открывает меню аудио (каретка ^) и СРАЗУ кликает пункт — без OCR между кликами,
+    иначе меню успевает закрыться. Результат проверяем по баннеру «...is on» и при
+    неудаче повторяем. Клик — тумблер: если было уже включено, первый клик выключит,
+    следующий снова включит, поэтому цикл сходится к «On»."""
+    maximize_meeting_window()        # детерминированный fullscreen -> стабильные координаты
+    time.sleep(1.2)
+    for _ in range(retries):
+        _reveal_toolbar()
+        _click("audio_menu_caret")   # открыть меню
+        time.sleep(1.0)
+        _click("original_sound")     # сразу кликнуть пункт (меню ещё открыто)
+        time.sleep(1.0)
+        if _original_sound_on():
+            key("Escape")
+            return True
+        key("Escape")
+    log.warning("enable_original_sound: не удалось подтвердить включение")
+    return False
 
 
 def setup_meeting_audio() -> None:
