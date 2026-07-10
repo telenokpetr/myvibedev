@@ -164,20 +164,51 @@ def _window_size(wid: str) -> tuple[int, int] | None:
     return (int(m.group(1)), int(m.group(2))) if m else None
 
 
+# Текст на экране, означающий что бот ПОДКЛЮЧИЛСЯ, но митинг ещё не идёт
+# (хост не запустил / зал ожидания). Это НЕ ошибка входа.
+_WAIT_KEYWORDS = (
+    "waiting for the host", "waiting for host",
+    "let them know you're here", "we've let them know",
+    "host has joined", "please wait", "waiting room",
+)
+
+
+def _ocr_screen() -> str:
+    """OCR всего экрана (англ.) — вернуть текст в нижнем регистре. '' при ошибке."""
+    path = "/tmp/_ocr_state.png"
+    try:
+        _run(["scrot", "-o", path], timeout=8)
+        r = _run(["tesseract", path, "stdout", "-l", "eng"], timeout=15)
+        return r.stdout.lower()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def meeting_state() -> str:
+    """Состояние входа: 'live' (окно Meeting) | 'waiting' (ожидание хоста/зал
+    ожидания) | 'none' (не вошёл / дома / ошибка)."""
+    if find_meeting_window() is not None:
+        return "live"
+    text = _ocr_screen()
+    if any(k in text for k in _WAIT_KEYWORDS):
+        return "waiting"
+    return "none"
+
+
 def verify_in_meeting(min_ratio: float = 0.6) -> bool:
-    """True, если бот реально в конференции (не на превью / в лобби / на диалоге).
+    """True, если бот подключился к конференции — включая «ожидание хоста».
 
-    Признак — окно с заголовком активной конференции («Meeting»). Раньше вход
-    определялся по РАЗМЕРУ окна, но главное окно «Zoom Workplace» и экран превью
-    тоже развёрнуты почти на весь экран → давали ложный вход ещё до подключения
-    (баг «слепой state machine», docs/CALIBRATION.md §7). Заголовок надёжнее.
-    `min_ratio` больше не используется (оставлен для совместимости вызова).
+    'live' — окно с заголовком «Meeting»; 'waiting' — экран ожидания хоста/зала
+    ожидания (окно всё ещё «Zoom Workplace», отличаем по тексту через OCR). Раньше
+    учитывалось только окно «Meeting» → бот, пришедший раньше хоста, ошибочно давал
+    `error` (docs/CALIBRATION.md §7). `min_ratio` не используется (для совместимости).
     """
-    return find_meeting_window() is not None
+    return meeting_state() in ("live", "waiting")
 
 
-def wait_in_meeting(timeout: float = 40.0, interval: float = 2.0) -> bool:
-    """Ждём появления окна митинга до timeout сек. False — вход не подтверждён."""
+def wait_in_meeting(timeout: float = 60.0, interval: float = 3.0) -> bool:
+    """Ждём подтверждения входа (live или waiting) до timeout сек.
+    False — вход не подтверждён (остались дома / ошибка)."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         if verify_in_meeting():

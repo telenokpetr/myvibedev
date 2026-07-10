@@ -74,16 +74,21 @@ class SessionManager:
             # при «Invalid meeting ID» окно митинга не появится → это ошибка.
             if not gui.wait_in_meeting():
                 self._state.status = "error"
-                self._state.error = "вход не подтверждён (окно митинга не появилось)"
-                self._log("вход НЕ подтверждён — окна конференции нет")
+                self._state.error = "вход не подтверждён (остались вне конференции)"
+                self._log("вход НЕ подтверждён — бот не в конференции")
                 return
             self._state.status = "live"
-            self._log("бот в конференции")
-            # Разворачиваем реальное окно конференции на весь экран.
-            gui.maximize_meeting_window()
-            # Включаем Original sound, иначе шумодав глушит музыку бота (P1).
-            gui.setup_meeting_audio()
-            self._log("аудио настроено (original sound)")
+            if gui.meeting_state() == "waiting":
+                # Бот подключился, но хост ещё не запустил митинг / зал ожидания.
+                # Это не ошибка. Аудио настроим, когда появится тулбар (митинг стартует);
+                # Original sound уже включён «для всех будущих митингов» в профиле.
+                self._log("бот подключён, ожидание хоста")
+            else:
+                self._log("бот в конференции")
+                gui.maximize_meeting_window()
+                # Включаем Original sound, иначе шумодав глушит музыку бота (P1).
+                gui.setup_meeting_audio()
+                self._log("аудио настроено (original sound)")
 
             if host_key:
                 self._state.status = "claiming"
