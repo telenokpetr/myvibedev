@@ -344,26 +344,41 @@ def set_output_volume_max() -> None:
     _click("output_volume_max")
 
 
-def open_audio_menu() -> None:
-    """Открыть меню аудио (клик по каретке ^ у кнопки Audio в нижнем тулбаре).
-    Перед этим разворачиваем окно и показываем тулбар."""
+def _audio_menu_open() -> bool:
+    """OCR-проверка, что меню аудио раскрыто (видны его заголовки)."""
+    t = _ocr_screen()
+    return "microphone modes" in t or "select a microphone" in t
+
+
+def open_audio_menu(retries: int = 3) -> bool:
+    """Открыть меню аудио (каретка ^ у кнопки Audio) с проверкой и ретраями.
+
+    Тулбар авто-прячется, поэтому перед кликом будим его движением мыши у нижней
+    кромки; после клика OCR-проверяем, что меню раскрылось, иначе повторяем."""
     maximize_meeting_window()
-    move_mouse_center()
-    time.sleep(0.3)
-    # шевелим мышь у нижней кромки, чтобы всплыл тулбар
-    _run(["xdotool", "mousemove", str(config.width // 2), str(config.height - 40)])
-    time.sleep(0.6)
-    _click("audio_menu_caret")
-    time.sleep(1.0)
+    time.sleep(1.5)                  # дать интерфейсу митинга осесть после входа
+    for _ in range(retries):
+        # разбудить нижний тулбар
+        _run(["xdotool", "mousemove", str(config.width // 2), str(config.height - 3)])
+        time.sleep(0.5)
+        _run(["xdotool", "mousemove", str(config.width // 2), str(config.height - 45)])
+        time.sleep(0.6)
+        _click("audio_menu_caret")
+        time.sleep(1.2)
+        if _audio_menu_open():
+            return True
+    return False
 
 
 def enable_original_sound() -> None:
     """Включить «Original sound for musicians» — иначе шумодав режет музыку (§5).
-    Открывает меню аудио и кликает пункт. Zoom запоминает выбор для будущих митингов.
+    Надёжно открывает меню (с проверкой) и кликает пункт. Zoom запоминает выбор.
     """
-    open_audio_menu()
+    if not open_audio_menu():
+        log.warning("enable_original_sound: меню аудио не открылось после ретраев")
+        return
     _click("original_sound")
-    time.sleep(0.5)
+    time.sleep(0.6)
     key("Escape")                    # закрыть меню, если осталось открытым
 
 
