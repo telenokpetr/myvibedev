@@ -3,11 +3,27 @@
 import os
 import re
 import subprocess
+import time
 import urllib.parse
 
 from app.config import config
 
 ENV = {**os.environ, "DISPLAY": config.display}
+
+
+def _kill_all(timeout: float = 6.0) -> None:
+    """Убить все процессы zoom и дождаться их смерти (TERM → KILL).
+    Нужно перед входом по ссылке: single-instance Zoom игнорирует новый --url,
+    если инстанс уже запущен (открывает домашний экран вместо митинга)."""
+    subprocess.run(["pkill", "-TERM", "zoom"], env=ENV, check=False)
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        r = subprocess.run(["pgrep", "-x", "zoom"], env=ENV, capture_output=True)
+        if r.returncode != 0:          # процессов нет
+            return
+        time.sleep(0.3)
+    subprocess.run(["pkill", "-KILL", "zoom"], env=ENV, check=False)
+    time.sleep(1)
 
 
 def parse_meeting(join_url: str) -> tuple[str | None, str | None]:
@@ -46,7 +62,10 @@ def build_zoommtg(join_url: str, passcode: str | None) -> str:
 
 
 def launch(join_url: str, passcode: str | None) -> subprocess.Popen:
-    """Запускаем Zoom-клиент с входом в конференцию."""
+    """Запускаем Zoom-клиент с входом в конференцию.
+
+    Сначала чистим старый инстанс, иначе новый --url не применится (баг P4)."""
+    _kill_all()
     url = build_zoommtg(join_url, passcode)
     return subprocess.Popen(
         ["zoom", f"--url={url}"],

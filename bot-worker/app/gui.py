@@ -19,30 +19,31 @@ log = logging.getLogger("gui")
 ENV = {**os.environ, "DISPLAY": config.display}
 
 # Опорная геометрия деплоя (docker-compose SCREEN_GEOMETRY).
-_REF_GEOMETRY = (1280, 720)
+_REF_GEOMETRY = (1920, 1080)
 
-# Координаты кликов (x, y). Верифицированы под 1280×720, кроме перечисленных в
-# _UNVERIFIED (координаты облачной записи — их выверяли под 1080p).
+# Координаты кликов (x, y) под 1920×1080. Часть выверена вживую, часть в
+# _UNVERIFIED (калибруется на живом митинге; `_click` предупреждает).
 COORDS = {
-    # Вход в аккаунт Zoom — экран логина клиента (§3)
-    "signin_button": (1045, 32),
-    "email_field": (498, 324),
-    "email_next": (498, 380),
-    "password_field": (498, 351),
-    "stay_signed_in": (326, 401),
-    "signin_submit": (498, 456),
-    "otp_field": (348, 247),         # первое поле OTP (авто-submit после 6 цифр)
+    # Вход в аккаунт Zoom — экран логина клиента (§3), верифицировано 1080p
+    "signin_button": (817, 583),
+    "email_field": (817, 503),
+    "email_next": (817, 559),
+    "password_field": (817, 531),
+    "stay_signed_in": (647, 580),
+    "signin_submit": (817, 634),
+    "otp_field": (700, 400),         # ОЦЕНКА — уточнить когда появится OTP
     # Вход в конференцию (§1)
-    "join_meeting": (909, 690),      # «Join» на экране пред-входа (preview)
-    "join_with_audio": (637, 323),   # «Join with Computer Audio»
+    "join_meeting": (1229, 945),     # «Join» на экране preview (верифиц. 1080p)
+    "join_with_audio": (637, 323),   # «Join with Computer Audio» — калибровать 1080p
     # Audio-настройки (§5)
-    "original_sound": (173, 548),    # «Original sound for musicians»
+    "audio_menu_caret": (455, 1013), # каретка ^ у кнопки Audio — калибровать 1080p
+    "original_sound": (540, 769),    # «Original sound for musicians» (верифиц. 1080p)
     "output_volume_max": (1205, 343),
-    # Модерация как хост (§4)
+    # Модерация как хост (§4) — калибровать 1080p
     "mute_all_panel": (1060, 686),
     "allow_unmute_check": (399, 421),
     "mute_all_confirm": (744, 421),
-    # Облачная запись — координаты выверены под 1080p, под 720p НЕ проверены:
+    # Облачная запись — верифицировано вживую 1080p:
     "rec_indicator": (955, 172),
     "rec_cloud_option": (510, 803),
     "rec_stop_option": (816, 243),
@@ -50,11 +51,11 @@ COORDS = {
     "rec_stop_confirm_yes": (1082, 688),
 }
 
-# Координаты, не выверенные под текущую геометрию 720p (значения 1080p) — `_click`
-# предупреждает при их использовании, даже если геометрия совпала с опорной.
+# Координаты, ещё не выверенные под 1080p — `_click` предупреждает при использовании.
 _UNVERIFIED = {
-    "rec_indicator", "rec_cloud_option", "rec_stop_option",
-    "rec_pause_option", "rec_stop_confirm_yes",
+    "otp_field", "join_with_audio", "audio_menu_caret",
+    "mute_all_panel", "allow_unmute_check", "mute_all_confirm",
+    "output_volume_max",
 }
 
 
@@ -312,11 +313,37 @@ def set_output_volume_max() -> None:
     _click("output_volume_max")
 
 
+def open_audio_menu() -> None:
+    """Открыть меню аудио (клик по каретке ^ у кнопки Audio в нижнем тулбаре).
+    Перед этим разворачиваем окно и показываем тулбар."""
+    maximize_meeting_window()
+    move_mouse_center()
+    time.sleep(0.3)
+    # шевелим мышь у нижней кромки, чтобы всплыл тулбар
+    _run(["xdotool", "mousemove", str(config.width // 2), str(config.height - 40)])
+    time.sleep(0.6)
+    _click("audio_menu_caret")
+    time.sleep(1.0)
+
+
 def enable_original_sound() -> None:
     """Включить «Original sound for musicians» — иначе шумодав режет музыку (§5).
-    Пункт в Audio-меню (каретка ^ у кнопки Mute); открытие меню — вручную.
+    Открывает меню аудио и кликает пункт. Zoom запоминает выбор для будущих митингов.
     """
+    open_audio_menu()
     _click("original_sound")
+    time.sleep(0.5)
+    key("Escape")                    # закрыть меню, если осталось открытым
+
+
+def setup_meeting_audio() -> None:
+    """Пост-вход: включить Original sound (иначе музыку глушит шумодав). Микрофон
+    BotMic и «не замьючен» обычно уже стоят из профиля/входа с computer audio.
+    Критично для гостя — у него режим сбрасывается на Noise removal при рестарте."""
+    try:
+        enable_original_sound()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("setup_meeting_audio: не удалось включить original sound: %s", exc)
 
 
 # ---- Облачная запись Zoom (как со-хост в лицензированном митинге) ----

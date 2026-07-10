@@ -49,7 +49,7 @@ services:
     # Zoom-клиенту нужно больше /dev/shm, иначе падает рендер
     shm_size: "1gb"
     environment:
-      SCREEN_GEOMETRY: "1280x720x24"
+      SCREEN_GEOMETRY: "1920x1080x24"
       ZOOM_BOT_NAME: "Модератор IPDC @telenokpetr"
       RECORDINGS_DIR: "/data/recordings"
       SCREENSHOTS_DIR: "/data/screenshots"
@@ -75,7 +75,7 @@ services:
     init: true
     shm_size: "1gb"
     environment:
-      SCREEN_GEOMETRY: "1280x720x24"
+      SCREEN_GEOMETRY: "1920x1080x24"
       ZOOM_BOT_NAME: "Модератор IPDC @telenokpetr"
       RECORDINGS_DIR: "/data/recordings"
       SCREENSHOTS_DIR: "/data/screenshots"

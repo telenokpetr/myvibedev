@@ -81,6 +81,9 @@ class SessionManager:
             self._log("бот в конференции")
             # Разворачиваем реальное окно конференции на весь экран.
             gui.maximize_meeting_window()
+            # Включаем Original sound, иначе шумодав глушит музыку бота (P1).
+            gui.setup_meeting_audio()
+            self._log("аудио настроено (original sound)")
 
             if host_key:
                 self._state.status = "claiming"
