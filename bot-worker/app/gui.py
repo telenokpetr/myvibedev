@@ -166,6 +166,34 @@ def maximize_meeting_window() -> str | None:
     return wid
 
 
+def _is_fullscreen() -> bool:
+    """Митинг в НАТИВНОМ полноэкранном режиме Zoom? Признак — вокруг нет домашнего
+    окна «Zoom Workplace» (в fullscreen оно скрыто под митингом). Проверяем OCR:
+    в fullscreen НЕТ пунктов левого меню home (Whiteboards/Canvas/Docs)."""
+    t = _ocr_screen()
+    return "whiteboards" not in t and "canvas" not in t
+
+
+def enter_fullscreen(retries: int = 2) -> None:
+    """Ввести митинг в НАТИВНЫЙ полноэкранный режим Zoom (двойной клик по видео).
+
+    Критично для записи: ffmpeg снимает весь экран 1920×1080; в оконном режиме
+    митинг — мелкое окно с домашней Zoom вокруг → плохой файл. Нативный fullscreen
+    (в отличие от WM-resize) надёжно заполняет экран. Идемпотентно: если уже
+    fullscreen — не трогаем (двойной клик — тумблер, иначе бы вышли)."""
+    wid = find_meeting_window()
+    if wid is None:
+        return
+    _run(["xdotool", "windowactivate", "--sync", wid])
+    for _ in range(retries):
+        if _is_fullscreen():
+            return
+        move_mouse_center()
+        _run(["xdotool", "click", "--repeat", "2", "--delay", "200", "1"])
+        time.sleep(2.0)
+    # финально не проверяем повторно, чтобы случайно не выйти тумблером
+
+
 def _window_size(wid: str) -> tuple[int, int] | None:
     out = _run(["xdotool", "getwindowgeometry", wid]).stdout
     m = re.search(r"Geometry:\s*(\d+)x(\d+)", out)
@@ -372,7 +400,7 @@ def enable_original_sound(retries: int = 3) -> bool:
     иначе меню успевает закрыться. Результат проверяем по баннеру «...is on» и при
     неудаче повторяем. Клик — тумблер: если было уже включено, первый клик выключит,
     следующий снова включит, поэтому цикл сходится к «On»."""
-    maximize_meeting_window()        # детерминированный fullscreen -> стабильные координаты
+    enter_fullscreen()               # нативный fullscreen -> стабильные координаты тулбара
     time.sleep(1.2)
     for _ in range(retries):
         _reveal_toolbar()

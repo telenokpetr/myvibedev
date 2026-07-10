@@ -85,10 +85,12 @@ class SessionManager:
                 self._log("бот подключён, ожидание хоста")
             else:
                 self._log("бот в конференции")
-                gui.maximize_meeting_window()
+                # Нативный fullscreen — иначе запись снимет мелкое окно с домашней
+                # Zoom вокруг (плохой файл). Заодно даёт стабильные координаты тулбара.
+                gui.enter_fullscreen()
                 # Включаем Original sound, иначе шумодав глушит музыку бота (P1).
                 gui.setup_meeting_audio()
-                self._log("аудио настроено (original sound)")
+                self._log("аудио и fullscreen настроены")
 
             if host_key:
                 self._state.status = "claiming"
