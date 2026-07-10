@@ -1,10 +1,9 @@
 """GUI-автоматизация Zoom-клиента через xdotool.
 
-Деплой работает на Full HD 1920×1080 (docker-compose SCREEN_GEOMETRY). Координаты
-входа в аккаунт и Audio-меню ВЕРИФИЦИРОВАНЫ вживую под 1080p. Часть точек (вход в
-конференцию, Mute All, output volume) ещё на значениях 1280×720 — они в
-`_UNVERIFIED_1080`, и `_click` предупреждает при их использовании. См.
-docs/CALIBRATION.md.
+Деплой работает на 1280×720 (docker-compose SCREEN_GEOMETRY). Координаты входа в
+аккаунт, конференцию, Audio-меню и Mute All ВЕРИФИЦИРОВАНЫ вживую под 720p
+(docs/CALIBRATION.md). Координаты облачной записи (`rec_*`) выверялись под 1080p —
+они в `_UNVERIFIED`, и `_click` предупреждает при их использовании под 720p.
 """
 
 import logging
@@ -20,46 +19,42 @@ log = logging.getLogger("gui")
 ENV = {**os.environ, "DISPLAY": config.display}
 
 # Опорная геометрия деплоя (docker-compose SCREEN_GEOMETRY).
-_REF_GEOMETRY = (1920, 1080)
+_REF_GEOMETRY = (1280, 720)
 
-# Координаты кликов (x, y). Верифицированы под 1920×1080, кроме перечисленных в
-# _UNVERIFIED_1080 (те ещё на значениях 1280×720).
+# Координаты кликов (x, y). Верифицированы под 1280×720, кроме перечисленных в
+# _UNVERIFIED (координаты облачной записи — их выверяли под 1080p).
 COORDS = {
-    # Вход в аккаунт Zoom — экран логина клиента (верифицировано 1080p)
-    "signin_button": (817, 583),
-    "email_field": (817, 503),
-    "email_next": (817, 559),
-    "password_field": (817, 531),
-    "stay_signed_in": (647, 580),
-    "signin_submit": (817, 634),
-    "otp_field": (700, 400),         # ОЦЕНКА — уточнить когда реально появится OTP
-    # Audio-меню (верифицировано 1080p)
-    "original_sound": (540, 769),    # «Original sound for musicians»
-    # Вход в конференцию — ещё 720p, не выверено под 1080p
+    # Вход в аккаунт Zoom — экран логина клиента (§3)
+    "signin_button": (1045, 32),
+    "email_field": (498, 324),
+    "email_next": (498, 380),
+    "password_field": (498, 351),
+    "stay_signed_in": (326, 401),
+    "signin_submit": (498, 456),
+    "otp_field": (348, 247),         # первое поле OTP (авто-submit после 6 цифр)
+    # Вход в конференцию (§1)
+    "join_meeting": (909, 690),      # «Join» на экране пред-входа (preview)
     "join_with_audio": (637, 323),   # «Join with Computer Audio»
-    # Модерация как хост — ещё 720p, не выверено под 1080p
+    # Audio-настройки (§5)
+    "original_sound": (173, 548),    # «Original sound for musicians»
+    "output_volume_max": (1205, 343),
+    # Модерация как хост (§4)
     "mute_all_panel": (1060, 686),
     "allow_unmute_check": (399, 421),
     "mute_all_confirm": (744, 421),
-    # Output volume — ещё 720p, не выверено под 1080p
-    "output_volume_max": (1205, 343),
-    # Облачная запись (верифицировано вживую 8 июля, 1080p, полноэкранное окно):
-    # старт — через меню Alt+R; стоп/пауза — через клик по индикатору «REC» вверху,
-    # который открывает меню на стабильных позициях (НЕ зависит от плавающего тулбара,
-    # где кнопка Record гуляет и рушит клик).
-    "rec_indicator": (955, 172),          # верхний «☁ REC» → меню Stop/Pause
-    "rec_cloud_option": (510, 803),       # «Record to the cloud» в меню Alt+R
-    "rec_stop_option": (816, 243),        # «Stop recording» в меню REC-индикатора
-    "rec_pause_option": (816, 291),       # «Pause/Resume recording» там же
-    "rec_stop_confirm_yes": (1082, 688),  # «Yes» в диалоге подтверждения стопа
+    # Облачная запись — координаты выверены под 1080p, под 720p НЕ проверены:
+    "rec_indicator": (955, 172),
+    "rec_cloud_option": (510, 803),
+    "rec_stop_option": (816, 243),
+    "rec_pause_option": (816, 291),
+    "rec_stop_confirm_yes": (1082, 688),
 }
 
-# Координаты, ещё не перекалиброванные под 1080p (значения 1280×720) — `_click`
+# Координаты, не выверенные под текущую геометрию 720p (значения 1080p) — `_click`
 # предупреждает при их использовании, даже если геометрия совпала с опорной.
-_UNVERIFIED_1080 = {
-    "otp_field", "join_with_audio",
-    "mute_all_panel", "allow_unmute_check", "mute_all_confirm",
-    "output_volume_max",
+_UNVERIFIED = {
+    "rec_indicator", "rec_cloud_option", "rec_stop_option",
+    "rec_pause_option", "rec_stop_confirm_yes",
 }
 
 
@@ -98,8 +93,8 @@ def _click(name: str, button: str = "1") -> None:
         log.warning("геометрия %dx%d != опорной %dx%d — координата '%s' может "
                     "промахнуться", config.width, config.height,
                     _REF_GEOMETRY[0], _REF_GEOMETRY[1], name)
-    elif name in _UNVERIFIED_1080:
-        log.warning("координата '%s' ещё не выверена под 1080p (значение 720p) — "
+    elif name in _UNVERIFIED:
+        log.warning("координата '%s' не выверена под текущую геометрию — "
                     "клик может промахнуться", name)
     x, y = COORDS[name]
     move_click(x, y, button)
@@ -204,17 +199,25 @@ def move_mouse_top() -> None:
 # ---- Сценарии (координаты верифицированы вживую, docs/CALIBRATION.md) ----
 
 def dismiss_startup_dialogs() -> None:
-    """Закрываем системные диалоги и подключаем аудио.
+    """Проходим экран пред-входа и подключаем аудио.
 
-    2×Enter подтверждают часть системных окон, но экран пред-входа НЕ проматывают
-    (CALIBRATION §1) — вход по ссылке уже инициирован zoommtg://. После входа сам
-    всплывает аудио-диалог → жмём «Join with Computer Audio»."""
-    for _ in range(2):
-        time.sleep(2)
-        move_mouse_center()
-        key("Return")
+    Экран пред-входа (preview) НЕ проматывается по Enter (CALIBRATION §1) — нужен
+    явный клик по «Join». После входа сам всплывает аудио-диалог → «Join with
+    Computer Audio». 2×Enter подтверждают возможные системные окна между шагами."""
+    time.sleep(2)
+    move_mouse_center()
+    key("Return")                    # на случай системного окна
+    click_prejoin_join()             # «Join» на экране preview
+    time.sleep(2)
+    key("Return")
     time.sleep(1)
     join_with_computer_audio()
+
+
+def click_prejoin_join() -> None:
+    """Клик «Join» на экране пред-входа (preview) — иначе бот застревает на превью
+    и в митинг не входит (CALIBRATION §1)."""
+    _click("join_meeting")
 
 
 def join_with_computer_audio() -> None:
