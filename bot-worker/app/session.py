@@ -109,13 +109,51 @@ class SessionManager:
                 self._state.status = "recording"
                 self._log(f"запись (локально) начата: {res.get('path')}")
 
+            # Следим, что бот всё ещё в митинге: если митинг завершат извне (лимит
+            # бесплатного тарифа / хост закрыл), бот выпадает на home — фиксируем это,
+            # иначе статус зависает в live и слот не освобождается.
+            self._start_watch()
+
         except Exception as exc:  # noqa: BLE001
             self._state.status = "error"
             self._state.error = str(exc)
             self._log(f"ошибка: {exc}")
 
+    def _start_watch(self) -> None:
+        self._watch_stop = False
+        threading.Thread(target=self._watch, daemon=True).start()
+
+    def _watch(self) -> None:
+        """Раз в 15с проверяем, что бот в конференции. Два «none» подряд → митинг
+        завершён извне: чистим ресурсы и помечаем finished."""
+        misses = 0
+        while not getattr(self, "_watch_stop", True):
+            time.sleep(15)
+            if self._state.status not in ("live", "recording", "claiming"):
+                return
+            try:
+                st = gui.meeting_state()
+            except Exception:  # noqa: BLE001
+                st = "none"
+            misses = misses + 1 if st == "none" else 0
+            if misses >= 2:
+                self._log("митинг завершён извне — бот вне конференции")
+                self._finish_externally()
+                return
+
+    def _finish_externally(self) -> None:
+        self._watch_stop = True
+        try:
+            moderator.stop()
+            if recording.status()["active"]:
+                recording.stop()
+        except Exception:  # noqa: BLE001
+            pass
+        self._state.status = "finished"
+
     def leave(self) -> None:
         with self._lock:
+            self._watch_stop = True
             self._log("выхожу из конференции")
             moderator.stop()
             if recording.status()["active"]:
