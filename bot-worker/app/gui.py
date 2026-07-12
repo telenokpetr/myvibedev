@@ -415,11 +415,14 @@ def _diff_rightmost_cluster(a_path: str, b_path: str,
         cols = np.where(diff.any(axis=0))[0]
         if cols.size == 0:
             return None
-        # кластеры колонок по разрывам >12px; правый кластер = «…»
-        breaks = np.where(np.diff(cols) > 12)[0]
-        cluster = cols[breaks[-1] + 1:] if breaks.size else cols
-        cx = x0 + int(cluster.mean())
-        rows = np.where(diff[:, cluster].any(axis=1))[0]
+        # Иконки тулбара (ответить/эмодзи/«…») стоят с зазорами ~6px и дифф
+        # склеивает их в ОДИН кластер — клик в центр кластера попадает в
+        # эмодзи (живой тест 12.07, открылся пикер смайликов). «…» — крайняя
+        # правая иконка, поэтому кликаем в правый край диффа минус полширины
+        # иконки.
+        cx = x0 + int(cols[-1]) - 6
+        near = cols[cols >= cols[-1] - 16]      # колонки самой правой иконки
+        rows = np.where(diff[:, near].any(axis=1))[0]
         return cx, y0 + int(rows.mean())
     except Exception as exc:  # noqa: BLE001
         log.warning("_diff_rightmost_cluster: %s", exc)
