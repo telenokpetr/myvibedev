@@ -237,17 +237,24 @@ def find_text_on_screen(word: str, min_conf: float = 50.0,
     Резолюшн-независимая альтернатива фикс-координатам для текстовых пунктов
     меню/кнопок. Апскейл ×2 (LANCZOS) — мелкий UI-шрифт Zoom без апскейла
     читается ненадёжно (тот же вывод, что и для чата, RELIABILITY-PLAN P2).
+    Перед OCR — минимум по RGB-каналам: КРАСНЫЙ текст (пункт «Delete» в меню
+    сообщения) при обычном переводе в серый становится светлым и tesseract
+    его выбрасывает — Copy/Quote читались, Delete нет (живой тест 12.07);
+    min-канал делает цветной текст тёмным, как чёрный.
     min_conf высокий: ложный клик по меню хуже, чем «не нашли»."""
     from app import ocrutil
     path = "/tmp/_ocr_find.png"
     try:
         if _run(["scrot", "-o", path], timeout=8).returncode != 0:
             return []
+        from PIL import Image, ImageChops
+        img = Image.open(path).convert("RGB")
+        r, g, b = img.split()
+        img = ImageChops.darker(ImageChops.darker(r, g), b)
         if upscale > 1:
-            from PIL import Image
-            img = Image.open(path)
-            img.resize((img.width * upscale, img.height * upscale),
-                       Image.LANCZOS).save(path)
+            img = img.resize((img.width * upscale, img.height * upscale),
+                             Image.LANCZOS)
+        img.save(path)
         out = _run(["tesseract", path, "stdout", "-l", "eng",
                     "--psm", "11", "tsv"], timeout=20).stdout
     except Exception:  # noqa: BLE001
