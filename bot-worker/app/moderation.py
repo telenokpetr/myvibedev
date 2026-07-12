@@ -142,7 +142,9 @@ class Moderator:
         reason = ""
         if self.profanity.check(msg.text):
             category, reason = "profanity", "нецензурная лексика"
-        else:
+        elif not msg.backlog:
+            # бэклог первого чтения спам-детектором не считаем: история
+            # приходит одним кадром и выглядит как флуд (см. chatreader)
             spam_reason = self.spam.check(msg)
             if spam_reason:
                 category, reason = "spam", spam_reason
