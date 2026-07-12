@@ -9,9 +9,10 @@ Live-чтение делаем через OCR отдельного окна «Me
 выдаёт мусор — см. docs/RELIABILITY-PLAN.md P2); tesseract остаётся fallback'ом,
 выбор можно форсировать через CHAT_READER=paddle|tesseract|atspi.
 
-⚠️ v1: распознаётся ТЕКСТ сообщений (для детекции мата/спама этого достаточно),
+⚠️ распознаётся ТЕКСТ сообщений (для детекции мата/спама этого достаточно),
 но надёжно разбить на «автор/сообщение/время» OCR не может — поэтому sender="чат".
-Точная привязка автора и калибровка региона — на живом тесте (см. docs/RELIABILITY-PLAN.md P2).
+Зато каждая строка знает свои ЭКРАННЫЕ координаты (ChatMessage.pos) — на них
+опирается действие «удалить сообщение» (gui.delete_chat_message).
 """
 
 import logging
@@ -20,6 +21,8 @@ import re
 import subprocess
 import time
 from dataclasses import dataclass
+
+from app import ocrutil
 
 log = logging.getLogger("chatreader")
 
@@ -32,6 +35,7 @@ _UI_NOISE = {
     "meeting chat", "gif", "конференция", "reactions", "to everyone",
     "type message here", "direct message", "in meeting", "host", "you",
     "today", "yesterday",
+    "еуегуопе",  # «Everyone» кириллическими двойниками (так его читает rus+eng OCR)
 }
 # Строки-время вида 12:34 / 12:34:56 и одиночные разделители.
 _TIME_RE = re.compile(r"^\d{1,2}:\d{2}(:\d{2})?(\s?(am|pm))?$", re.I)
@@ -41,6 +45,10 @@ _TIME_RE = re.compile(r"^\d{1,2}:\d{2}(:\d{2})?(\s?(am|pm))?$", re.I)
 class ChatMessage:
     sender: str
     text: str
+    # Центр строки сообщения в ЭКРАННЫХ координатах (для GUI-действий:
+    # правый клик по сообщению → Delete). None — позиция неизвестна
+    # (например, сообщение пришло через /moderation/test).
+    pos: tuple[int, int] | None = None
 
 
 class ChatReader:
@@ -80,6 +88,9 @@ class OcrChatReader(ChatReader):
         self._img = "/tmp/_chat_ocr.png"
         self._opened = False
         self._empty_polls = 0
+        # Пересчёт координат изображения в экранные: screen = origin + px/scale.
+        self._origin = (0, 0)   # левый-верхний угол снятой области на экране
+        self._scale = 1.0       # фактор апскейла (_prepare)
 
     def available(self) -> bool:
         return True
@@ -110,6 +121,9 @@ class OcrChatReader(ChatReader):
             _run(["xdotool", "windowactivate", "--sync", wid])
             time.sleep(0.3)
             r = _run(["scrot", "-u", "-o", self._img], timeout=8)
+            m = re.search(r"Position:\s*(-?\d+),(-?\d+)",
+                          _run(["xdotool", "getwindowgeometry", wid]).stdout)
+            self._origin = (int(m.group(1)), int(m.group(2))) if m else (0, 0)
             return r.returncode == 0 and os.path.exists(self._img)
         r = _run(["scrot", "-o", self._img], timeout=8)
         if r.returncode != 0 or not os.path.exists(self._img):
@@ -119,7 +133,9 @@ class OcrChatReader(ChatReader):
             img = Image.open(self._img)
             w, h = img.size
             # панель ~ правые 23% ширины; сверху срезаем тулбар Zoom, снизу поле ввода
-            img.crop((int(w * 0.77), int(h * 0.055), w, int(h * 0.86))).save(self._img)
+            box = (int(w * 0.77), int(h * 0.055), w, int(h * 0.86))
+            img.crop(box).save(self._img)
+            self._origin = (box[0], box[1])
             return True
         except Exception:  # noqa: BLE001
             return False
@@ -138,6 +154,7 @@ class OcrChatReader(ChatReader):
         """Апскейл скриншота ×3 (LANCZOS): шрифт чата ~11-12px «как есть» оба
         движка читают мусором, после апскейла — уверенно (проверено на синтетике,
         см. коммит). Большие окна апскейлим меньше, чтобы не раздувать кадр."""
+        self._scale = 1.0
         try:
             from PIL import Image
             img = Image.open(self._img)
@@ -145,19 +162,28 @@ class OcrChatReader(ChatReader):
             if factor > 1:
                 img.resize((img.width * factor, img.height * factor),
                            Image.LANCZOS).save(self._img)
+                self._scale = float(factor)
         except Exception as exc:  # noqa: BLE001
             log.debug("апскейл скриншота не удался: %s", exc)
 
-    def _recognize(self) -> list[str]:
-        """Распознать строки текста на self._img (tesseract, rus+eng).
+    def _recognize(self) -> list[ocrutil.Line]:
+        """Распознать строки текста на self._img (tesseract, rus+eng, TSV —
+        нужны боксы слов для координат строк).
 
         --psm 11 (sparse text): дефолтная сегментация (psm 3) выбрасывает
         одинокий «пузырь» сообщения рядом с аватаркой как не-текст — первое
         сообщение митинга не читалось вовсе (живой тест 12.07). В sparse-режиме
-        и одиночные пузыри, и плотный чат читаются без потерь."""
+        и одиночные пузыри, и плотный чат читаются без потерь. Склейка слов в
+        строки — общая с paddle (ocrutil.group_lines), сегментации psm 11 не
+        доверяем: она дробит визуальную строку на отдельные «блоки»."""
         out = _run(["tesseract", self._img, "stdout", "-l", "rus+eng",
-                    "--psm", "11"], timeout=20).stdout
-        return out.splitlines()
+                    "--psm", "11", "tsv"], timeout=20).stdout
+        return ocrutil.group_lines(ocrutil.parse_tsv(out))
+
+    def _to_screen(self, line: ocrutil.Line) -> tuple[int, int]:
+        """Центр строки: пиксели изображения (после кропа+апскейла) → экран."""
+        return (self._origin[0] + int(line.cx / self._scale),
+                self._origin[1] + int(line.cy / self._scale))
 
     def poll(self) -> list[ChatMessage]:
         if not self._opened:
@@ -167,7 +193,7 @@ class OcrChatReader(ChatReader):
         if not self._capture():
             return []
         self._prepare()
-        recognized = [raw.strip() for raw in self._recognize() if raw.strip()]
+        recognized = [ln for ln in self._recognize() if ln.text.strip()]
         if not recognized:
             # Открытая панель всегда даёт хоть какие-то строки (Everyone/время),
             # полная пустота = панель, видимо, закрыли — переоткрыть, но не чаще
@@ -180,12 +206,14 @@ class OcrChatReader(ChatReader):
         self._empty_polls = 0
         msgs: list[ChatMessage] = []
         for line in recognized:
-            if self._is_noise(line):
+            text = line.text.strip()
+            if self._is_noise(text):
                 continue
-            if line in self._seen:
+            if text in self._seen:
                 continue
-            self._seen.add(line)
-            msgs.append(ChatMessage(sender="чат", text=line))
+            self._seen.add(text)
+            msgs.append(ChatMessage(sender="чат", text=text,
+                                    pos=self._to_screen(line)))
         if msgs:
             log.info("OCR чата: %d новых строк", len(msgs))
         return msgs
@@ -220,7 +248,7 @@ class PaddleOcrChatReader(OcrChatReader):
             shutil.copytree(seed, dst)
             log.info("модели PaddleOCR скопированы из seed в %s", dst)
 
-    def _recognize(self) -> list[str]:
+    def _recognize(self) -> list[ocrutil.Line]:
         if self._engine is None:
             self._seed_models()
             from paddleocr import PaddleOCR
@@ -233,29 +261,18 @@ class PaddleOcrChatReader(OcrChatReader):
                                      det_limit_type="max", cpu_threads=2)
             log.info("PaddleOCR инициализирован (lang=ru)")
         result = self._engine.ocr(self._img, cls=False)
-        # Paddle отдаёт отдельные слова/фрагменты с боксами — склеиваем их в
-        # строки по вертикали, иначе мат, разбитый на «пиз»+«д»+«е», не поймается.
-        words: list[tuple[float, float, float, str]] = []  # (y_центр, x, высота, текст)
+        # Paddle отдаёт отдельные слова/фрагменты с боксами — склейка в строки
+        # общая с tesseract (ocrutil.group_lines), иначе мат, разбитый на
+        # «пиз»+«д»+«е», не поймается.
+        words: list[ocrutil.Word] = []
         for page in result or []:       # ocr() возвращает список страниц,
             for box, (text, conf) in page or []:  # пустая страница — None
                 if conf < self._min_conf:
                     continue
                 xs = [p[0] for p in box]
                 ys = [p[1] for p in box]
-                words.append(((min(ys) + max(ys)) / 2, min(xs),
-                              max(ys) - min(ys), text))
-        if not words:
-            return []
-        words.sort(key=lambda w: w[0])
-        med_h = sorted(w[2] for w in words)[len(words) // 2]
-        rows: list[list] = [[words[0]]]
-        for w in words[1:]:
-            if w[0] - rows[-1][-1][0] <= med_h * 0.6:
-                rows[-1].append(w)
-            else:
-                rows.append([w])
-        return [" ".join(w[3] for w in sorted(row, key=lambda w: w[1]))
-                for row in rows]
+                words.append(ocrutil.Word(min(xs), min(ys), max(xs), max(ys), text))
+        return ocrutil.group_lines(words)
 
 
 def get_reader() -> ChatReader:

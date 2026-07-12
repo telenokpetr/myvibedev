@@ -1,8 +1,10 @@
 """Движок модерации чата: фильтр нецензурной лексики + детектор спама.
 
 Правила работают полностью и тестируются офлайн (через /moderation/test).
-Действия (удалить сообщение / замьютить автора) — best-effort через GUI,
-калибруются на живом митинге (задача #8). Пока действие фиксируется как
+Действия — best-effort через GUI: удаление сообщения реализовано (правый клик
+по координатам строки из OCR + поиск пункта «Delete» на экране, см.
+gui.delete_chat_message), мьют автора недоступен, пока OCR не привязывает
+автора к сообщению. Если действие не удалось — событие фиксируется как
 «flagged» (нарушение обнаружено и залогировано).
 """
 
@@ -159,14 +161,16 @@ class Moderator:
         return ev
 
     def _act(self, msg: ChatMessage, category: str) -> str:
-        # best-effort: попытка замьютить автора / удалить сообщение (калибровка #8)
+        # best-effort: сперва удалить сообщение — его позицию на экране знает
+        # OCR-ридер (msg.pos). Мьют автора пока недостижим: OCR не привязывает
+        # автора к сообщению (sender="чат"), поэтому mute_participant — no-op.
         try:
+            if gui.delete_chat_message(msg.pos):
+                return "deleted"
             if gui.mute_participant(msg.sender):
                 return "muted"
-            if gui.delete_chat_message(msg.sender, msg.text):
-                return "deleted"
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            log.warning("действие модерации не удалось: %s", exc)
         return "flagged"
 
     def _push(self, ev: ModEvent) -> None:

@@ -220,6 +220,50 @@ def _ocr_screen() -> str:
         return ""
 
 
+def find_text_on_screen(word: str, min_conf: float = 50.0,
+                        upscale: int = 2) -> list[tuple[int, int]]:
+    """Все вхождения слова на экране (tesseract TSV) → центры в ЭКРАННЫХ px.
+
+    Резолюшн-независимая альтернатива фикс-координатам для текстовых пунктов
+    меню/кнопок. Апскейл ×2 (LANCZOS) — мелкий UI-шрифт Zoom без апскейла
+    читается ненадёжно (тот же вывод, что и для чата, RELIABILITY-PLAN P2).
+    min_conf высокий: ложный клик по меню хуже, чем «не нашли»."""
+    from app import ocrutil
+    path = "/tmp/_ocr_find.png"
+    try:
+        if _run(["scrot", "-o", path], timeout=8).returncode != 0:
+            return []
+        if upscale > 1:
+            from PIL import Image
+            img = Image.open(path)
+            img.resize((img.width * upscale, img.height * upscale),
+                       Image.LANCZOS).save(path)
+        out = _run(["tesseract", path, "stdout", "-l", "eng",
+                    "--psm", "11", "tsv"], timeout=20).stdout
+    except Exception:  # noqa: BLE001
+        return []
+    target = word.lower()
+    return [(int(w.xc / upscale), int(w.yc / upscale))
+            for w in ocrutil.parse_tsv(out, min_conf=min_conf)
+            if w.text.lower().strip(".,:;…") == target]
+
+
+def click_text(word: str, near: tuple[int, int] | None = None,
+               prefer_bottom: bool = False) -> bool:
+    """Найти слово на экране и кликнуть по нему. near — выбрать вхождение,
+    ближайшее к точке (контекстное меню у курсора); prefer_bottom — нижнее
+    (кнопка диалога, а не его заголовок). False — слово не найдено."""
+    hits = find_text_on_screen(word)
+    if not hits:
+        return False
+    if near is not None:
+        hits.sort(key=lambda p: (p[0] - near[0]) ** 2 + (p[1] - near[1]) ** 2)
+    elif prefer_bottom:
+        hits.sort(key=lambda p: -p[1])
+    move_click(*hits[0])
+    return True
+
+
 def meeting_state() -> str:
     """Состояние входа: 'live' (окно Meeting) | 'waiting' (ожидание хоста/зал
     ожидания) | 'none' (не вошёл / дома / ошибка)."""
@@ -328,20 +372,40 @@ def mute_all(hard: bool = True) -> bool:
 def mute_participant(name: str) -> bool:
     """Замьютить конкретного участника (точечная модерация).
 
-    Не откалибровано: в CALIBRATION нет верифицированных координат выбора
-    участника в панели (позиция зависит от списка). Для жёсткой модерации
-    используйте mute_all(). Пока — no-op (событие фиксируется как «flagged»).
+    Не реализовано: OCR-ридер чата не привязывает автора к сообщению
+    (sender="чат"), так что мьютить некого; поиск участника в панели по имени —
+    отдельная задача. Для жёсткой модерации используйте mute_all(). Пока —
+    no-op (событие фиксируется как «flagged»).
     """
     return False
 
 
-def delete_chat_message(sender: str, text: str) -> bool:
-    """Удалить сообщение в чате (host-контрол).
+def delete_chat_message(pos: tuple[int, int] | None) -> bool:
+    """Удалить сообщение чата (host-контрол): правый клик по строке сообщения →
+    контекстное меню → «Delete» → подтвердить в диалоге.
 
-    Не откалибровано: нет верифицированных координат наведения на конкретное
-    сообщение (позиция зависит от прокрутки чата). Пока — no-op.
-    """
-    return False
+    pos — центр строки в экранных координатах, его знает OCR-ридер
+    (ChatMessage.pos), поэтому фикс-координат здесь нет: и сообщение, и пункт
+    меню, и кнопка диалога находятся динамически (пункт/кнопка — OCR-поиском
+    слова Delete). Best-effort: чат мог прокрутиться с момента распознавания —
+    тогда меню не откроется/пункт не найдётся и вернём False (событие останется
+    «flagged»). Требует прав хоста."""
+    if not pos:
+        return False
+    x, y = pos
+    move_click(x, y, button="3")          # контекстное меню сообщения
+    time.sleep(0.8)
+    if not click_text("delete", near=(x, y)):
+        key("Escape")                     # правый клик мимо — прибрать меню
+        log.info("delete_chat_message: пункт Delete не найден у (%d,%d)", x, y)
+        return False
+    time.sleep(0.8)
+    # Возможен диалог подтверждения — его кнопка «Delete» ниже заголовка.
+    # Если диалога нет, click_text вернёт False («deleted»-плейсхолдер и прочие
+    # формы слова точному матчу не соответствуют) — это не ошибка.
+    click_text("delete", prefer_bottom=True)
+    key("Escape")                         # прибрать остатки меню/диалога
+    return True
 
 
 # ---- Вход в аккаунт Zoom (§3) ----
