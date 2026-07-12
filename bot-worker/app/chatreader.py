@@ -20,6 +20,7 @@ import os
 import re
 import subprocess
 import time
+from collections import Counter
 from dataclasses import dataclass
 
 from app import ocrutil
@@ -91,7 +92,12 @@ class OcrChatReader(ChatReader):
     """OCR окна «Meeting chat»: активируем окно, снимаем, распознаём, дедупим."""
 
     def __init__(self) -> None:
-        self._seen: set[str] = set()
+        # Дедуп — СЧЁТЧИКИ ключей ПРЕДЫДУЩЕГО кадра, не накопленное множество:
+        # чат append-only, повторное одинаковое сообщение («хуй» второй раз,
+        # «ав» три раза подряд) при накопительном дедупе становилось невидимым
+        # (живой тест 12.07: мат после удаления такого же не ловился). Счётчик
+        # различает два одинаковых пузыря в одном кадре.
+        self._prev_counts: Counter = Counter()
         self._img = "/tmp/_chat_ocr.png"
         self._opened = False
         self._empty_polls = 0
@@ -230,23 +236,34 @@ class OcrChatReader(ChatReader):
                 self._empty_polls = 0
             return []
         self._empty_polls = 0
-        msgs: list[ChatMessage] = []
+        # Осмысленные строки кадра (сверху вниз) с их ключами.
+        rows: list[tuple[str, str, ocrutil.Line]] = []
         for line in recognized:
             text = line.text.strip()
             if self._is_noise(text):
                 continue
             key = self._dedup_key(text)
-            if not key or key in self._seen:
-                continue
-            self._seen.add(key)
-            msgs.append(ChatMessage(sender="чат", text=text,
-                                    pos=self._to_screen(line),
-                                    pos_right=self._to_screen_right(line)))
+            if key:
+                rows.append((key, text, line))
+        cur_counts = Counter(k for k, _, _ in rows)
+        # Новое = вхождения, которых не было в прошлом кадре. Новые сообщения
+        # append-only и появляются СНИЗУ, поэтому лишние вхождения ключа
+        # отдаём начиная с нижних строк.
+        msgs: list[ChatMessage] = []
+        emitted: Counter = Counter()
+        for key, text, line in reversed(rows):
+            if emitted[key] < cur_counts[key] - self._prev_counts[key]:
+                emitted[key] += 1
+                msgs.append(ChatMessage(sender="чат", text=text,
+                                        pos=self._to_screen(line),
+                                        pos_right=self._to_screen_right(line)))
+        msgs.reverse()
+        self._prev_counts = cur_counts
         if not self._backlog_done:
             # Первое непустое чтение — это ИСТОРИЯ чата (при рестарте бота
-            # посреди митинга панель отдаёт всё разом): поглощаем в _seen без
-            # модерации, иначе спам-детектор примет бэклог за флуд, а бот
-            # пойдёт удалять давно обработанные сообщения (живой тест 12.07).
+            # посреди митинга панель отдаёт всё разом): поглощаем в счётчик
+            # кадра без модерации, иначе спам-детектор примет бэклог за флуд,
+            # а бот пойдёт удалять давно обработанные сообщения (тест 12.07).
             self._backlog_done = True
             if msgs:
                 log.info("OCR чата: бэклог %d строк пропущен", len(msgs))
