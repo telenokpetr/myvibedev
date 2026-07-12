@@ -35,6 +35,7 @@ class Line:
     text: str
     cx: int  # центр строки, px изображения
     cy: int
+    x1: int  # правый край строки, px изображения (для клика правее пузыря)
 
 
 def parse_tsv(tsv: str, min_conf: float = 0.0) -> list[Word]:
@@ -80,7 +81,9 @@ def group_lines(words: list[Word]) -> list[Line]:
     lines: list[Line] = []
     for row in rows:
         row.sort(key=lambda w: w.x0)
-        cx = (min(w.x0 for w in row) + max(w.x1 for w in row)) / 2
+        right = max(w.x1 for w in row)
+        cx = (min(w.x0 for w in row) + right) / 2
         cy = sum(w.yc for w in row) / len(row)
-        lines.append(Line(" ".join(w.text for w in row), int(cx), int(cy)))
+        lines.append(Line(" ".join(w.text for w in row), int(cx), int(cy),
+                          int(right)))
     return lines

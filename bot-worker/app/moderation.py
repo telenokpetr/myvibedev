@@ -30,6 +30,7 @@ PROFANITY_ROOTS = [
     r"ху[йяе]", r"пизд", r"еб[аеёуы]", r"ёб", r"бля", r"блят", r"блад", r"сук[аи]",
     r"муд[ао]", r"залуп", r"гандон", r"гондон", r"пидор", r"пидар", r"хер",
     r"дроч", r"манда", r"уеб", r"долбоёб", r"долбоеб", r"выеб", r"наеб", r"чмо",
+    r"ебл",  # еблан/ебло — корень еб[аеёуы] их не ловит (живой тест 12.07)
     r"fuck", r"shit", r"bitch", r"asshole", r"cunt", r"dick",
 ]
 
@@ -149,7 +150,7 @@ class Moderator:
         if not category:
             return None
 
-        action = self._act(msg, category)
+        action = self._act(msg, category, reason)
         ev = ModEvent(
             sender=msg.sender, text=msg.text, category=category,
             reason=reason, action=action,
@@ -160,12 +161,15 @@ class Moderator:
         log.info("модерация: %s [%s] %s: %s", action, category, msg.sender, reason)
         return ev
 
-    def _act(self, msg: ChatMessage, category: str) -> str:
+    def _act(self, msg: ChatMessage, category: str, reason: str) -> str:
         # best-effort: сперва удалить сообщение — его позицию на экране знает
-        # OCR-ридер (msg.pos). Мьют автора пока недостижим: OCR не привязывает
-        # автора к сообщению (sender="чат"), поэтому mute_participant — no-op.
+        # OCR-ридер (msg.pos). Удаляем только мат и повторы: на «флуде»
+        # каждая строка серии дёргала бы GUI-удаление и мышь металась бы по
+        # экрану весь всплеск (живой тест 12.07). Мьют автора пока недостижим:
+        # OCR не привязывает автора (sender="чат"), mute_participant — no-op.
+        deletable = category == "profanity" or reason.startswith("повтор")
         try:
-            if gui.delete_chat_message(msg.pos):
+            if deletable and gui.delete_chat_message(msg.pos, msg.pos_right):
                 return "deleted"
             if gui.mute_participant(msg.sender):
                 return "muted"

@@ -36,9 +36,14 @@ _UI_NOISE = {
     "type message here", "direct message", "in meeting", "host", "you",
     "today", "yesterday",
     "еуегуопе",  # «Everyone» кириллическими двойниками (так его читает rus+eng OCR)
+    # пункты меню «…» сообщения — попадают в кадр, пока меню открыто удалением
+    "copy", "quote", "delete",
 }
 # Строки-время вида 12:34 / 12:34:56 и одиночные разделители.
 _TIME_RE = re.compile(r"^\d{1,2}:\d{2}(:\d{2})?(\s?(am|pm))?$", re.I)
+# Шапка группы сообщений «Имя to Everyone 05:48 PM» — оканчивается временем
+# (OCR читает PM и как «РМ», цифры путает с «о»), сообщением не является.
+_HDR_TIME_RE = re.compile(r"[\dо]{1,2}[:.][\dо]{2}\s*([ap]m|[ра]м)?\s*$", re.I)
 
 
 @dataclass
@@ -46,9 +51,11 @@ class ChatMessage:
     sender: str
     text: str
     # Центр строки сообщения в ЭКРАННЫХ координатах (для GUI-действий:
-    # правый клик по сообщению → Delete). None — позиция неизвестна
+    # ховер по сообщению → «…» → Delete). None — позиция неизвестна
     # (например, сообщение пришло через /moderation/test).
     pos: tuple[int, int] | None = None
+    # Правый край строки на экране — оттуда начинается ховер-тулбар пузыря.
+    pos_right: tuple[int, int] | None = None
 
 
 class ChatReader:
@@ -88,6 +95,7 @@ class OcrChatReader(ChatReader):
         self._img = "/tmp/_chat_ocr.png"
         self._opened = False
         self._empty_polls = 0
+        self._backlog_done = False
         # Пересчёт координат изображения в экранные: screen = origin + px/scale.
         self._origin = (0, 0)   # левый-верхний угол снятой области на экране
         self._scale = 1.0       # фактор апскейла (_prepare)
@@ -101,10 +109,13 @@ class OcrChatReader(ChatReader):
 
     def _open_panel(self) -> None:
         """Открыть чат (Alt+H). ВАЖНО: alt+h — тоггл, слепо жать нельзя,
-        вызывается один раз на сессию + при подозрении, что панель закрыта."""
+        вызывается один раз на сессию + при подозрении, что панель закрыта.
+        Фокус — строго на окно митинга: в фокусе плавающего окна чата alt+h
+        печатает «h» в поле ввода (живой тест 12.07)."""
         try:
             from app import gui
-            gui.activate_meeting_window()
+            if gui.focus_meeting_window() is None:
+                return
             gui.move_mouse_center()
             _run(["xdotool", "key", "--clearmodifiers", "alt+h"])
             time.sleep(1.5)
@@ -146,7 +157,17 @@ class OcrChatReader(ChatReader):
             return True
         if _TIME_RE.match(low):
             return True
+        if _HDR_TIME_RE.search(low):
+            return True
         return any(n in low for n in _UI_NOISE)
+
+    @staticmethod
+    def _dedup_key(text: str) -> str:
+        """Ключ дедупа: только буквы/цифры, нижний регистр. Иконки ховер-тулбара
+        и прочий UI-мусор OCR дочитывает к строке по-разному («хуй =», «= хуй»)
+        — без нормализации одно сообщение флагается повторно (живой тест 12.07).
+        """
+        return re.sub(r"[\W_]+", "", text.lower())
 
     _MAX_SIDE = 4000  # предел большей стороны после апскейла
 
@@ -185,6 +206,11 @@ class OcrChatReader(ChatReader):
         return (self._origin[0] + int(line.cx / self._scale),
                 self._origin[1] + int(line.cy / self._scale))
 
+    def _to_screen_right(self, line: ocrutil.Line) -> tuple[int, int]:
+        """Правый край строки в экранных координатах (та же высота)."""
+        return (self._origin[0] + int(line.x1 / self._scale),
+                self._origin[1] + int(line.cy / self._scale))
+
     def poll(self) -> list[ChatMessage]:
         if not self._opened:
             if not self._chat_window():
@@ -209,11 +235,22 @@ class OcrChatReader(ChatReader):
             text = line.text.strip()
             if self._is_noise(text):
                 continue
-            if text in self._seen:
+            key = self._dedup_key(text)
+            if not key or key in self._seen:
                 continue
-            self._seen.add(text)
+            self._seen.add(key)
             msgs.append(ChatMessage(sender="чат", text=text,
-                                    pos=self._to_screen(line)))
+                                    pos=self._to_screen(line),
+                                    pos_right=self._to_screen_right(line)))
+        if not self._backlog_done:
+            # Первое непустое чтение — это ИСТОРИЯ чата (при рестарте бота
+            # посреди митинга панель отдаёт всё разом): поглощаем в _seen без
+            # модерации, иначе спам-детектор примет бэклог за флуд, а бот
+            # пойдёт удалять давно обработанные сообщения (живой тест 12.07).
+            self._backlog_done = True
+            if msgs:
+                log.info("OCR чата: бэклог %d строк пропущен", len(msgs))
+            return []
         if msgs:
             log.info("OCR чата: %d новых строк", len(msgs))
         return msgs

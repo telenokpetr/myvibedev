@@ -149,6 +149,16 @@ def activate_meeting_window() -> str | None:
     return wid
 
 
+def focus_meeting_window() -> str | None:
+    """Активировать именно ОКНО МИТИНГА (по заголовку «Meeting»), а не последнее
+    окно Zoom: хоткеи митинга (alt+h и т.п.) в фокусе плавающего окна чата
+    печатают буквы в поле ввода (живой тест 12.07)."""
+    wid = find_meeting_window()
+    if wid:
+        _run(["xdotool", "windowactivate", "--sync", wid])
+    return wid
+
+
 def maximize_meeting_window() -> str | None:
     """Развернуть окно конференции РОВНО на весь экран (детерминированно).
 
@@ -380,23 +390,133 @@ def mute_participant(name: str) -> bool:
     return False
 
 
-def delete_chat_message(pos: tuple[int, int] | None) -> bool:
-    """Удалить сообщение чата (host-контрол): правый клик по строке сообщения →
-    контекстное меню → «Delete» → подтвердить в диалоге.
+def _chat_window_id() -> str | None:
+    """WID плавающего окна «Meeting chat» (появляется в нативном fullscreen или
+    если чат «вынесен»), либо None — чат докнут панелью в окно митинга."""
+    out = _run(["xdotool", "search", "--name", "Meeting chat"]).stdout.split()
+    return out[0] if out else None
 
-    pos — центр строки в экранных координатах, его знает OCR-ридер
-    (ChatMessage.pos), поэтому фикс-координат здесь нет: и сообщение, и пункт
-    меню, и кнопка диалога находятся динамически (пункт/кнопка — OCR-поиском
-    слова Delete). Best-effort: чат мог прокрутиться с момента распознавания —
-    тогда меню не откроется/пункт не найдётся и вернём False (событие останется
-    «flagged»). Требует прав хоста."""
+
+def _diff_rightmost_cluster(a_path: str, b_path: str,
+                            x: int, y: int) -> tuple[int, int] | None:
+    """Правый крайний кластер изменившихся пикселей между двумя скриншотами в
+    полосе строки y±18 правее x — это кнопка «…» всплывшего ховер-тулбара."""
+    try:
+        import numpy as np
+        from PIL import Image
+        a = np.asarray(Image.open(a_path).convert("L"), dtype=np.int16)
+        b = np.asarray(Image.open(b_path).convert("L"), dtype=np.int16)
+        if a.shape != b.shape:
+            return None
+        band = 18
+        y0, y1 = max(0, y - band), min(a.shape[0], y + band)
+        x0 = min(x + 10, a.shape[1] - 1)   # x+10 — отсечь сам курсор мыши
+        diff = np.abs(a[y0:y1, x0:] - b[y0:y1, x0:]) > 25
+        cols = np.where(diff.any(axis=0))[0]
+        if cols.size == 0:
+            return None
+        # кластеры колонок по разрывам >12px; правый кластер = «…»
+        breaks = np.where(np.diff(cols) > 12)[0]
+        cluster = cols[breaks[-1] + 1:] if breaks.size else cols
+        cx = x0 + int(cluster.mean())
+        rows = np.where(diff[:, cluster].any(axis=1))[0]
+        return cx, y0 + int(rows.mean())
+    except Exception as exc:  # noqa: BLE001
+        log.warning("_diff_rightmost_cluster: %s", exc)
+        return None
+
+
+def _find_hover_ellipsis_docked(x: int, y: int) -> tuple[int, int] | None:
+    """«…» для ДОКНУТОЙ панели чата: ховер работает от движения мыши.
+
+    Кадр «без ховера» — курсор НАД строкой (y-80): тулбар всплывает при
+    наведении на любую точку строки, поэтому нейтральная точка на той же y
+    держала тулбар в обоих кадрах и дифф был пуст. Перед вторым кадром —
+    «шевеление» мыши (одиночный телепорт xdotool ховер поднимает не всегда)."""
+    _run(["xdotool", "mousemove", str(x), str(max(0, y - 80))])
+    time.sleep(0.6)
+    _run(["scrot", "-o", "/tmp/_hover_a.png"], timeout=8)
+    _run(["xdotool", "mousemove", str(x - 8), str(y)])
+    time.sleep(0.15)
+    _run(["xdotool", "mousemove", str(x), str(y)])
+    time.sleep(0.9)
+    _run(["scrot", "-o", "/tmp/_hover_b.png"], timeout=8)
+    return _diff_rightmost_cluster("/tmp/_hover_a.png", "/tmp/_hover_b.png", x, y)
+
+
+def _find_hover_ellipsis_floating(wid: str, x: int, y: int) -> tuple[int, int] | None:
+    """«…» для ПЛАВАЮЩЕГО окна «Meeting chat».
+
+    Живой тест 12.07: плавающее окно не реагирует на XTest-движения мыши —
+    ховер-тулбар оно показывает ровно один раз, при ОТКРЫТИИ окна, для строки
+    под курсором (позицию оно опрашивает само). Поэтому: кадр А (тулбара нет —
+    ховер мёртв) → закрыть окно → фокус на митинг → подвести мышь к строке
+    (движение должно случиться при живом окне митинга) → Alt+H (окно
+    возвращается с той же геометрией/прокруткой, тулбар всплывает под
+    курсором) → кадр Б → дифф. Alt+H слать только при фокусе на ОКНЕ
+    МИТИНГА: в фокусе чата он печатает «h» в поле ввода."""
+    _run(["xdotool", "mousemove", str(x), str(y)])
+    time.sleep(0.4)
+    _run(["scrot", "-o", "/tmp/_hover_a.png"], timeout=8)
+    _run(["wmctrl", "-i", "-c", wid])          # мягко закрыть окно чата
+    time.sleep(1.2)
+    if focus_meeting_window() is None:
+        return None
+    # Мышь на цель — ПОСЛЕ закрытия чата: движение должно увидеть окно
+    # митинга, тогда Zoom при открытии чата поднимет тулбар под курсором.
+    _run(["xdotool", "mousemove", str(x - 40), str(y)])
+    time.sleep(0.15)
+    _run(["xdotool", "mousemove", str(x), str(y)])
+    time.sleep(0.3)
+    key("alt+h")                               # переоткрыть чат под курсором
+    time.sleep(1.8)
+    if not _chat_window_id():
+        log.warning("чат не переоткрылся после alt+h")
+        return None
+    _run(["scrot", "-o", "/tmp/_hover_b.png"], timeout=8)
+    return _diff_rightmost_cluster("/tmp/_hover_a.png", "/tmp/_hover_b.png", x, y)
+
+
+def delete_chat_message(pos: tuple[int, int] | None,
+                        pos_right: tuple[int, int] | None = None) -> bool:
+    """Удалить сообщение чата (host-контрол): ховер по строке сообщения →
+    кнопка «…» всплывшего тулбара → меню Copy/Quote/Delete → «Delete».
+
+    pos/pos_right — центр и правый край строки в экранных координатах, их
+    знает OCR-ридер (ChatMessage), поэтому фикс-координат здесь нет: «…»
+    находится пиксель-диффом ховера (_find_hover_ellipsis), а если дифф пуст —
+    кликом с оффсетом от правого края пузыря (иконки тулбара идут через ~21px:
+    ответить +20, эмодзи +42, «…» +63; замерено вживую 12.07). Пункт меню —
+    OCR-поиском слова Delete. Best-effort: чат мог прокрутиться с момента
+    распознавания — тогда тулбар/пункт не найдётся и вернём False (событие
+    останется «flagged»). Требует прав хоста."""
     if not pos:
         return False
     x, y = pos
-    move_click(x, y, button="3")          # контекстное меню сообщения
-    time.sleep(0.8)
-    if not click_text("delete", near=(x, y)):
-        key("Escape")                     # правый клик мимо — прибрать меню
+    wid = _chat_window_id()
+    if wid:
+        dots = _find_hover_ellipsis_floating(wid, x, y)
+    else:
+        mwid = find_meeting_window()
+        if mwid:
+            _run(["xdotool", "windowactivate", "--sync", mwid])
+            time.sleep(0.3)
+        dots = _find_hover_ellipsis_docked(x, y)
+    if dots is None and pos_right:
+        # дифф не увидел тулбар — возможно, он уже был поднят (кадр «до» тоже
+        # его содержал). Пробуем оффсет от правого края текста строки: иконки
+        # тулбара идут от правого края пузыря через ~21px, «…» ≈ x1+68
+        # (замерено вживую 12.07 на пузырях «а» и «еблан»).
+        dots = (pos_right[0] + 68, y)
+        log.info("delete_chat_message: тулбар по диффу не найден, "
+                 "пробую оффсет от пузыря: (%d,%d)", *dots)
+    if dots is None:
+        log.info("delete_chat_message: тулбар ховера не найден у (%d,%d)", x, y)
+        return False
+    move_click(*dots)                     # открыть меню «…»
+    time.sleep(1.0)
+    if not click_text("delete", near=dots):
+        key("Escape")
         log.info("delete_chat_message: пункт Delete не найден у (%d,%d)", x, y)
         return False
     time.sleep(0.8)
