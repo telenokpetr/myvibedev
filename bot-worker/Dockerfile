@@ -71,6 +71,12 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt
 
+# Предзагрузка моделей PaddleOCR (det+rec для кириллицы) в образ, чтобы первый
+# poll() не качал их в рантайме. НЕ в /home/zoom — его заслоняет volume
+# zoomprofile; chatreader при первом запуске копирует seed в ~/.paddleocr.
+RUN HOME=/opt/paddleseed python3 -c "from paddleocr import PaddleOCR; PaddleOCR(use_angle_cls=False, lang='ru', show_log=False)" \
+    && chmod -R a+rX /opt/paddleseed
+
 COPY . .
 RUN chmod +x entrypoint.sh && chown -R zoom:zoom /app
 

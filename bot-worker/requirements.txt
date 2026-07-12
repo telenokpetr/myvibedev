@@ -3,3 +3,7 @@ uvicorn[standard]==0.34.0
 python-multipart==0.0.20
 httpx==0.28.1
 Pillow==11.1.0
+# OCR чата: PaddleOCR читает мелкую кириллицу, на которой tesseract сыпется (P2)
+numpy<2
+paddlepaddle==2.6.2
+paddleocr==2.8.1

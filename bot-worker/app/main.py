@@ -1,6 +1,12 @@
+import logging
 import os
 import subprocess
 import tempfile
+
+# INFO-логи приложения (модерация, OCR, сессия) в stdout контейнера —
+# без этого в docker logs видно только HTTP-доступ uvicorn'а.
+logging.basicConfig(level=logging.INFO,
+                    format="%(asctime)s %(name)s: %(message)s")
 
 from fastapi import FastAPI, File, UploadFile, WebSocket
 from fastapi.responses import FileResponse, JSONResponse

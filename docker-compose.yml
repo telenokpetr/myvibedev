@@ -54,6 +54,9 @@ services:
       RECORDINGS_DIR: "/data/recordings"
       SCREENSHOTS_DIR: "/data/screenshots"
       WEB_CALLBACK_URL: "http://web:8000"
+      # tesseract: paddle-инференс каждые 2с съедал CPU, Zoom терял соединение
+      # и вылетал из митинга; paddle остаётся опцией (CHAT_READER=paddle)
+      CHAT_READER: "tesseract"
     ports:
       - "9000:9000"   # управляющий API bot-worker (для тестов/отладки)
     depends_on:
@@ -80,6 +83,7 @@ services:
       RECORDINGS_DIR: "/data/recordings"
       SCREENSHOTS_DIR: "/data/screenshots"
       WEB_CALLBACK_URL: "http://web:8000"
+      CHAT_READER: "tesseract"
     ports:
       - "9001:9000"
     depends_on:
