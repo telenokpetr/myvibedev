@@ -43,21 +43,30 @@ def to_web_client(url: str) -> str:
 # последний виденный заголовок «Имя to Everyone».
 _JS_READ_CHAT = r"""
 () => {
+  // Заголовок группы: «Имя Кому Все ЧЧ:ММ» (RU) / «Name to Everyone HH:MM».
+  const HEAD = /(.+?)\s+(?:Кому|to)\s+(?:Все|Everyone|всех|Всем)/;
+  function findSender(el) {
+    let node = el;
+    for (let i = 0; i < 5 && node; i++) {          // вверх по предкам группы
+      let sib = node;
+      for (let j = 0; j < 4 && sib; j++) {         // и назад по соседям
+        const t = (sib.innerText || '').replace(/\n/g, ' ');
+        const m = t.match(HEAD);
+        if (m && m[1].trim() && m[1].trim().length < 40) return m[1].trim();
+        sib = sib.previousElementSibling;
+      }
+      node = node.parentElement;
+    }
+    return 'чат';
+  }
   const out = [];
   const items = document.querySelectorAll('[class*="new-chat-message"]');
-  let sender = 'чат';
   for (const el of items) {
-    // Заголовок группы: «Имя Кому Все ЧЧ:ММ» (RU) / «Name to Everyone HH:MM».
-    // Ищем в самом элементе или его предыдущем соседе по этому паттерну.
-    const scan = [el, el.previousElementSibling].filter(Boolean);
-    for (const s of scan) {
-      const m = (s.innerText||'').match(/^\s*(.+?)\s+(?:Кому|to)\s+/);
-      if (m && m[1].trim() && m[1].trim().length < 40) { sender = m[1].trim(); break; }
-    }
     const body = el.querySelector('[class*="new-chat-message__body"], [class*="message-text"], [class*="__content"]');
     if (!body) continue;
     const text = (body.innerText || '').trim();
     if (!text) continue;
+    const sender = findSender(el);
     const id = el.getAttribute('data-msg-id') || el.id ||
                (sender + '|' + text + '|' + out.length);
     out.push({id, sender, text});

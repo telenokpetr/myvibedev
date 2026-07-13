@@ -151,6 +151,9 @@ class BrowserModerator:
         new = [m for m in msgs if m["id"] not in self._seen]
         for m in new:
             self._seen.add(m["id"])
+        if new:
+            log.info("прочитано %d новых, авторы: %s", len(new),
+                     sorted({m["sender"] for m in new}))
         if not self._backlog_done:
             # первое чтение — видимая история: мат удаляем, спам не считаем
             self._backlog_done = True
