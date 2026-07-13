@@ -204,6 +204,7 @@ class BrowserModerator:
 
     POLL_INTERVAL = 1.0   # опрос чата, сек (2с не успевали за быстрым флудом)
     WARN_COOLDOWN = 60.0  # не предупреждать/мьютить одного автора чаще, сек
+    MUTE_ENABLED = False  # мьют ломает панель чата — доделать отдельно
 
     def _warn_and_mute(self, web: ZoomWeb, sender: str, category: str) -> None:
         # Предупреждение шлём даже если автор не распознан (sender="чат") —
@@ -227,10 +228,14 @@ class BrowserModerator:
                 web.send_chat(text)
             except Exception as exc:  # noqa: BLE001
                 log.warning("предупреждение не отправлено: %s", exc)
-        if sender and sender != "чат":
+        # Мьют временно отключён: открытие панели участников закрывает панель
+        # чата и ломает следующее удаление; кнопку мьюта в web-панели ещё надо
+        # выверить. Включить — MUTE_ENABLED=True, когда доделан.
+        if self.MUTE_ENABLED and sender and sender != "чат":
             try:
                 if web.mute_participant(sender):
                     log.info("участник замьючен: %s", sender)
+                web.ensure_chat_open()   # вернуть панель чата после участников
             except Exception as exc:  # noqa: BLE001
                 log.warning("мьют не удался: %s", exc)
 

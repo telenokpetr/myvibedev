@@ -197,11 +197,15 @@ class ZoomWeb:
             return False
 
     def chat_is_open(self) -> bool:
-        """Открыта ли панель чата (есть поле ввода/контейнер сообщений)."""
+        """Открыта ли ПАНЕЛЬ чата. Проверяем видимое ПОЛЕ ВВОДА — оно есть
+        только в открытой панели. По сообщениям判 нельзя: их класс носит и
+        всплывашка-превью нового сообщения при ЗАКРЫТОЙ панели (тогда полного
+        списка в DOM нет и удаление не находит сообщения)."""
         try:
-            return bool(self.page.evaluate(
-                "() => !!document.querySelector('[class*=\"new-chat-message\"], "
-                "[class*=\"chat-rich-text\"], [aria-label*=\"Введите\"]')"))
+            field = self.page.locator(
+                'div[contenteditable="true"], [role="textbox"][contenteditable="true"], '
+                'textarea[placeholder*="ообщение" i]')
+            return field.count() > 0 and field.last.is_visible()
         except Exception:  # noqa: BLE001
             return False
 
