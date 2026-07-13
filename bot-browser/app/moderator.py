@@ -214,9 +214,14 @@ class BrowserModerator:
         if warn_key not in self._warned:
             self._warned[warn_key] = now
             who = f"{sender}, " if sender and sender != "чат" else ""
+            # За мат — «веди себя прилично», за спам — про бан (по запросу).
+            if category == "profanity":
+                text = f"⚠️ {who}веди себя прилично!"
+            else:
+                text = f"⚠️ {who}предупреждение за спам. Повторится — бан."
             log.info("шлю предупреждение за %s (автор=%s)", why, sender)
             try:
-                web.send_chat(f"⚠️ {who}предупреждение за {why}. Повторится — бан.")
+                web.send_chat(text)
             except Exception as exc:  # noqa: BLE001
                 log.warning("предупреждение не отправлено: %s", exc)
         if sender and sender != "чат":
