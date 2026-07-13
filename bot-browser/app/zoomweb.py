@@ -61,12 +61,15 @@ _JS_READ_CHAT = r"""
   }
   const out = [];
   const items = document.querySelectorAll('[class*="new-chat-message"]');
+  let lastSender = 'чат';   // пузыри группы без заголовка наследуют имя выше
   for (const el of items) {
     const body = el.querySelector('[class*="new-chat-message__body"], [class*="message-text"], [class*="__content"]');
     if (!body) continue;
     const text = (body.innerText || '').trim();
     if (!text) continue;
-    const sender = findSender(el);
+    let sender = findSender(el);
+    if (sender === 'чат') sender = lastSender;
+    else lastSender = sender;
     const id = el.getAttribute('data-msg-id') || el.id ||
                (sender + '|' + text + '|' + out.length);
     out.push({id, sender, text});
