@@ -241,7 +241,13 @@ def find_text_on_screen(word: str, min_conf: float = 50.0,
     сообщения) при обычном переводе в серый становится светлым и tesseract
     его выбрасывает — Copy/Quote читались, Delete нет (живой тест 12.07);
     min-канал делает цветной текст тёмным, как чёрный.
-    min_conf высокий: ложный клик по меню хуже, чем «не нашли»."""
+    min_conf высокий: ложный клик по меню хуже, чем «не нашли».
+
+    OCR идёт в ДВУХ полярностях: (1) min по RGB-каналам — тёмный/цветной
+    текст на светлом (пункты меню, красный «Delete»); (2) инверсия — СВЕТЛЫЙ
+    текст на тёмном (кнопка «Delete» диалога подтверждения — белая на тёмной
+    заливке, tesseract без инверсии её не видит, живой тест 13.07). Хиты из
+    обеих склеиваются, дубли по близости координат отсекаются."""
     from app import ocrutil
     path = "/tmp/_ocr_find.png"
     try:
@@ -250,19 +256,29 @@ def find_text_on_screen(word: str, min_conf: float = 50.0,
         from PIL import Image, ImageChops
         img = Image.open(path).convert("RGB")
         r, g, b = img.split()
-        img = ImageChops.darker(ImageChops.darker(r, g), b)
+        base = ImageChops.darker(ImageChops.darker(r, g), b)
         if upscale > 1:
-            img = img.resize((img.width * upscale, img.height * upscale),
-                             Image.LANCZOS)
-        img.save(path)
-        out = _run(["tesseract", path, "stdout", "-l", "eng",
-                    "--psm", "11", "tsv"], timeout=20).stdout
+            base = base.resize((base.width * upscale, base.height * upscale),
+                               Image.LANCZOS)
+        base.save(path)
+        target = word.lower()
+        hits: list[tuple[int, int]] = []
+        for variant, tag in ((base, "d"), (ImageChops.invert(base), "i")):
+            vpath = f"/tmp/_ocr_find_{tag}.png"
+            variant.save(vpath)
+            out = _run(["tesseract", vpath, "stdout", "-l", "eng",
+                        "--psm", "11", "tsv"], timeout=20).stdout
+            for w in ocrutil.parse_tsv(out, min_conf=min_conf):
+                if w.text.lower().strip(".,:;…") == target:
+                    hits.append((int(w.xc / upscale), int(w.yc / upscale)))
     except Exception:  # noqa: BLE001
         return []
-    target = word.lower()
-    return [(int(w.xc / upscale), int(w.yc / upscale))
-            for w in ocrutil.parse_tsv(out, min_conf=min_conf)
-            if w.text.lower().strip(".,:;…") == target]
+    # дедуп вхождений, найденных в обеих полярностях (в пределах 12px)
+    uniq: list[tuple[int, int]] = []
+    for h in hits:
+        if not any(abs(h[0] - u[0]) < 12 and abs(h[1] - u[1]) < 12 for u in uniq):
+            uniq.append(h)
+    return uniq
 
 
 def click_text(word: str, near: tuple[int, int] | None = None,
@@ -538,13 +554,35 @@ def delete_chat_message(pos: tuple[int, int] | None,
                      x, y)
         key("Escape")
         return False
-    time.sleep(0.8)
-    # Возможен диалог подтверждения — его кнопка «Delete» ниже заголовка.
-    # Если диалога нет, click_text вернёт False («deleted»-плейсхолдер и прочие
-    # формы слова точному матчу не соответствуют) — это не ошибка.
-    click_text("delete", prefer_bottom=True)
-    key("Escape")                         # прибрать остатки меню/диалога
+    time.sleep(1.0)
+    # Новый билд Zoom (13.07) на удаление чужого сообщения показывает МОДАЛЬНЫЙ
+    # диалог «Delete message / Are you sure…» с кнопкой Delete. Если он есть —
+    # обязательно подтвердить, иначе сообщение остаётся (раньше возвращали
+    # True вслепую → ложный «deleted»).
+    if _confirm_dialog_open():
+        # кнопка Delete — правее кнопки Cancel и ниже текста; берём самое
+        # правое-нижнее вхождение (заголовок «Delete message» и «want to
+        # delete» в теле — левее и выше). Кнопка белая на тёмном — её ловит
+        # инверсная полярность find_text_on_screen.
+        hits = find_text_on_screen("delete")
+        if hits:
+            hits.sort(key=lambda p: (p[1], p[0]))   # ниже, затем правее
+            move_click(*hits[-1])
+            time.sleep(1.0)
+        if _confirm_dialog_open():
+            key("Return")                 # запасной путь: Delete — кнопка по умолч.
+            time.sleep(1.0)
+        if _confirm_dialog_open():
+            log.warning("delete_chat_message: диалог подтверждения не закрылся")
+            key("Escape")
+            return False
+    key("Escape")                         # прибрать остатки меню
     return True
+
+
+def _confirm_dialog_open() -> bool:
+    """Открыт ли модальный диалог подтверждения удаления сообщения."""
+    return "delete this message" in _ocr_screen()
 
 
 # ---- Вход в аккаунт Zoom (§3) ----
