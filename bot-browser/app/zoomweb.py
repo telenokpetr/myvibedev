@@ -209,15 +209,31 @@ class ZoomWeb:
     # ---- отправка предупреждения в чат ----
 
     def send_chat(self, text: str) -> bool:
-        """Написать сообщение в общий чат (предупреждение нарушителю)."""
+        """Написать сообщение в общий чат (предупреждение нарушителю).
+        Поле ввода Zoom web — contenteditable div (не textarea); отправка —
+        Enter, с проверкой, что поле очистилось (значит ушло)."""
         try:
             self.ensure_chat_open()
             box = self.page.locator(
-                '[contenteditable="true"], textarea[placeholder*="ообщение" i], '
-                '[aria-label*="ообщение" i]')
-            box.first.click(timeout=3000)
-            box.first.type(text, delay=10)
+                'div[contenteditable="true"], [role="textbox"][contenteditable], '
+                'textarea[placeholder*="ообщение" i]').last
+            box.click(timeout=3000)
+            self.page.wait_for_timeout(150)
+            # ввод через клавиатуру (contenteditable надёжнее печатать, не fill)
+            self.page.keyboard.type(text, delay=8)
+            self.page.wait_for_timeout(150)
             self.page.keyboard.press("Enter")
+            self.page.wait_for_timeout(400)
+            # если поле не очистилось — пробуем кнопку отправки (стрелка)
+            left = (box.inner_text() or "").strip() if box.count() else ""
+            if left and text[:6] in left:
+                try:
+                    self.page.locator(
+                        'button[aria-label*="Send" i], button[aria-label*="тправить" i]'
+                    ).last.click(timeout=1500)
+                except PWTimeout:
+                    pass
+            log.info("предупреждение отправлено в чат")
             return True
         except Exception as exc:  # noqa: BLE001
             log.warning("send_chat: %s", exc)

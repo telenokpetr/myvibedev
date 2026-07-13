@@ -120,16 +120,21 @@ class BrowserModerator:
                 return
             self.status = "live"
             log.info("браузерная модерация включена")
+            ticks = 0
             while self.enabled:
-                web.screenshot(os.path.join(config.shots_dir, "last.png"))
-                if not web.in_meeting():
-                    log.info("похоже, вышли из конференции")
-                    break
+                # скриншот раз в ~5 циклов (не каждый — экономим), опрос чата
+                # каждый цикл. POLL_INTERVAL=1с: при быстром флуде 2с не успевали.
+                if ticks % 5 == 0:
+                    web.screenshot(os.path.join(config.shots_dir, "last.png"))
+                    if not web.in_meeting():
+                        log.info("похоже, вышли из конференции")
+                        break
+                ticks += 1
                 try:
                     self._poll(web)
                 except Exception as exc:  # noqa: BLE001
                     log.warning("ошибка цикла: %s", exc)
-                time.sleep(2)
+                time.sleep(self.POLL_INTERVAL)
         except Exception as exc:  # noqa: BLE001
             self.status = "error"
             log.exception("сбой браузерного модератора: %s", exc)
@@ -194,6 +199,7 @@ class BrowserModerator:
         self._push(ev)
         log.info("модерация: %s [%s] %s: %s", action, category, msg.sender, reason)
 
+    POLL_INTERVAL = 1.0   # опрос чата, сек (2с не успевали за быстрым флудом)
     WARN_COOLDOWN = 60.0  # не предупреждать/мьютить одного автора чаще, сек
 
     def _warn_and_mute(self, web: ZoomWeb, sender: str, category: str) -> None:
