@@ -109,6 +109,7 @@ class BrowserModerator:
                 self.status = "finished"
 
     def _poll(self, web: ZoomWeb) -> None:
+        web.ensure_chat_open()   # панель могли не открыть при входе (зал ожидания)
         msgs = web.read_chat()
         new = [m for m in msgs if m["id"] not in self._seen]
         for m in new:

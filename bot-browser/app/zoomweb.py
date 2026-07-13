@@ -13,11 +13,30 @@ Playwright sync API привязан к потоку-владельцу, поэ�
 """
 
 import logging
+import re
 import time
 
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
 log = logging.getLogger("zoomweb")
+
+
+def to_web_client(url: str) -> str:
+    """Любую Zoom-ссылку привести к web-клиенту app.zoom.us/wc/join/<id>.
+
+    Desktop-ссылка вида us06web.zoom.us/j/<id>?pwd=… в браузере ведёт на
+    landing «запустить Zoom», поэтому строим прямой web-URL (проверено
+    разведкой 13.07)."""
+    m = (re.search(r"/j/(\d+)", url) or re.search(r"/wc/join/(\d+)", url)
+         or re.search(r"/wc/(\d+)/join", url))
+    if not m:
+        return url
+    mid = m.group(1)
+    web = f"https://app.zoom.us/wc/join/{mid}"
+    pwd = re.search(r"[?&]pwd=([^&]+)", url)
+    if pwd:
+        web += f"?pwd={pwd.group(1)}"
+    return web
 
 # JS-извлечение сообщений чата: id (генерим из позиции+текста, если нет data-id),
 # автор (заголовок группы) и текст. Пузыри без явного автора наследуют
@@ -90,6 +109,8 @@ class ZoomWeb:
 
     def join(self, url: str) -> bool:
         p = self.page
+        url = to_web_client(url)
+        log.info("join web-url: %s", url)
         p.goto(url, wait_until="domcontentloaded", timeout=60000)
         p.wait_for_timeout(4000)
         try:
@@ -115,14 +136,30 @@ class ZoomWeb:
         return "/wc/" in p.url
 
     def _open_chat(self) -> bool:
+        # Панель чата в web рендерит сообщения только когда открыта. Кнопка —
+        # aria «open the chat panel» (может нести суффикс «N unread message»).
         try:
             self.page.locator(
-                'button[aria-label*="chat panel"], button[aria-label*="Чат"]'
+                'button[aria-label*="chat panel"], button[aria-label*="open the chat"], '
+                'button[aria-label*="Чат"]'
             ).first.click(timeout=8000)
             self.page.wait_for_timeout(1500)
             return True
         except PWTimeout:
             return False
+
+    def chat_is_open(self) -> bool:
+        """Открыта ли панель чата (есть поле ввода/контейнер сообщений)."""
+        try:
+            return bool(self.page.evaluate(
+                "() => !!document.querySelector('[class*=\"new-chat-message\"], "
+                "[class*=\"chat-rich-text\"], [aria-label*=\"Введите\"]')"))
+        except Exception:  # noqa: BLE001
+            return False
+
+    def ensure_chat_open(self) -> None:
+        if not self.chat_is_open():
+            self._open_chat()
 
     def in_meeting(self) -> bool:
         return self.page is not None and "/wc/" in (self.page.url or "")

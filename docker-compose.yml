@@ -113,7 +113,12 @@ services:
     depends_on:
       - web
     volumes:
+      - ./bot-browser:/app          # монтируем код (правки без пересборки образа)
       - botshots:/data
+    # без --reload: watchfiles на правку кода перезапускал процесс и ронял
+    # live-сессию браузера (плюс плодил зомби-вкладки в митинге). Для перезапуска
+    # после правок — docker compose restart bot-browser.
+    command: uvicorn app.main:app --host 0.0.0.0 --port 9100
 
 volumes:
   db-data:
