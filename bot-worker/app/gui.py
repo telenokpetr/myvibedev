@@ -526,8 +526,17 @@ def delete_chat_message(pos: tuple[int, int] | None,
     move_click(*dots)                     # открыть меню «…»
     time.sleep(1.0)
     if not click_text("delete", near=dots):
+        # Меню открылось (Quote читается), а Delete в нём нет — это НЕ сбой
+        # OCR, а отсутствие прав: Delete у чужих сообщений видит только хост
+        # (живой тест 12.07 — юзер перезапустил конфу со своего клиента и
+        # хостом стал сам). Лечится передачей хоста боту (Make Host).
+        if find_text_on_screen("quote"):
+            log.warning("delete_chat_message: меню без Delete — у бота нет "
+                        "прав хоста, передайте боту Make Host")
+        else:
+            log.info("delete_chat_message: пункт Delete не найден у (%d,%d)",
+                     x, y)
         key("Escape")
-        log.info("delete_chat_message: пункт Delete не найден у (%d,%d)", x, y)
         return False
     time.sleep(0.8)
     # Возможен диалог подтверждения — его кнопка «Delete» ниже заголовка.

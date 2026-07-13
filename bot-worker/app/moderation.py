@@ -103,6 +103,12 @@ class ModEvent:
 
 
 class Moderator:
+    # Кулдаун повторной обработки НЕУДАЛЁННОГО нарушения, сек. Ховер бота
+    # меняет распознанный текст строки (иконки тулбара дочитываются в неё),
+    # покадровый дедуп считает её новой — без кулдауна бот дребезжит
+    # попытками удаления каждые ~5с по одному сообщению (живой тест 12.07).
+    RETRY_COOLDOWN = 90.0
+
     def __init__(self) -> None:
         self.profanity = ProfanityFilter()
         self.spam = SpamDetector()
@@ -110,6 +116,20 @@ class Moderator:
         self.enabled = False
         self._reader = None
         self._thread: threading.Thread | None = None
+        self._failed_at: dict[str, float] = {}  # ключ текста -> время неудачи
+
+    @staticmethod
+    def _cooldown_key(text: str) -> str:
+        """Ключ кулдауна: только буквы. Дребезг дописывает к строке цифры и
+        символы («хуй C5 ©»), совпадение проверяем по префиксу."""
+        return re.sub(r"[\W_\d]+", "", text.lower())
+
+    def _failed_recently(self, key: str) -> bool:
+        now = time.time()
+        self._failed_at = {k: t for k, t in self._failed_at.items()
+                           if now - t < self.RETRY_COOLDOWN}
+        return any(key.startswith(k) or k.startswith(key)
+                   for k in self._failed_at)
 
     # ---- жизненный цикл ----
 
@@ -117,6 +137,7 @@ class Moderator:
         if self.enabled:
             return
         self.spam = SpamDetector()  # сброс истории на новый митинг
+        self._failed_at = {}
         self._reader = get_reader()
         self.enabled = True
         self._thread = threading.Thread(target=self._loop, daemon=True)
@@ -152,7 +173,18 @@ class Moderator:
         if not category:
             return None
 
+        ckey = self._cooldown_key(msg.text)
+        if ckey and self._failed_recently(ckey):
+            # это же нарушение недавно не удалилось — не дребезжим мышью
+            # и лентой, повторная попытка после кулдауна
+            return None
+
         action = self._act(msg, category, reason)
+        if ckey:
+            if action == "flagged":
+                self._failed_at[ckey] = time.time()
+            else:
+                self._failed_at.pop(ckey, None)
         ev = ModEvent(
             sender=msg.sender, text=msg.text, category=category,
             reason=reason, action=action,
