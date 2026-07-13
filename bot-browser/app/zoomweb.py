@@ -271,10 +271,20 @@ class ZoomWeb:
 
     # ---- мьют участника ----
 
+    # «Mute»/«Выключить звук» — кнопка мьюта; «Unmute»/«Включить звук» (в т.ч.
+    # «Попросить включить звук») — участник уже замьючен. Якорь ^ отсекает
+    # «Unmute» от «mute», кириллица не пересекается («включить» не подстрока
+    # «выключить»).
+    _RX_MUTE = re.compile(r"^\s*(mute\b|выключить звук)", re.I)
+    _RX_UNMUTE = re.compile(r"unmute|включить звук", re.I)
+
     def mute_participant(self, name: str) -> bool:
         """Замьютить участника по имени: открыть панель «Участники», навести
-        РЕАЛЬНЫМ hover на строку (кнопка мьюта всплывает только от курсора,
-        как «...» в чате) → кнопка «Выключить звук»/Mute."""
+        РЕАЛЬНЫМ hover на строку (кнопки всплывают только от курсора, как «...»
+        в чате) → кнопка «Mute»/«Выключить звук». Кнопки строки бывают без
+        aria-label — ищем и по видимому тексту; «Unmute» = уже замьючен,
+        считаем успехом. Нет прямой кнопки — фолбэк через меню «Ещё» строки.
+        Панель чата после нас возвращает вызывающий (ensure_chat_open)."""
         p = self.page
         try:
             p.locator('button[aria-label*="participants" i], '
@@ -290,19 +300,76 @@ class ZoomWeb:
                 return False
             row.scroll_into_view_if_needed(timeout=2000)
             row.hover(timeout=2000)                # реальный hover
-            p.wait_for_timeout(250)
-            btn = row.locator(
-                'button[aria-label*="ute" i], button[aria-label*="ыключить звук" i]')
-            if btn.count() == 0:
-                # кнопка мьюта могла не всплыть/уже muted
-                log.info("mute: кнопка мьюта не найдена у %r", name)
-                return False
-            btn.first.click(timeout=2000)
-            log.info("mute: клик по кнопке мьюта у %r", name)
-            return True
+            p.wait_for_timeout(300)
+            state, btn = self._find_mute_button(row)
+            if state == "muted":
+                log.info("mute: %r уже замьючен", name)
+                return True
+            if state == "found":
+                btn.click(timeout=2000)
+                log.info("mute: клик по кнопке мьюта у %r", name)
+                return True
+            return self._mute_via_row_menu(row, name)
         except Exception as exc:  # noqa: BLE001
             log.warning("mute_participant: %s", exc)
             return False
+
+    def _find_mute_button(self, row):
+        """Кнопка мьюта среди кнопок строки — по aria-label И видимому тексту.
+        Возвращает ('found', btn) / ('muted', None) / ('none', None). Все
+        подписи пишутся в лог — по ним выверяется селектор на живом тесте."""
+        labels = []
+        try:
+            buttons = row.locator("button")
+            for i in range(min(buttons.count(), 12)):
+                b = buttons.nth(i)
+                try:
+                    cap = (b.get_attribute("aria-label") or b.inner_text() or "").strip()
+                except Exception:  # noqa: BLE001
+                    continue
+                labels.append(cap)
+                if self._RX_MUTE.search(cap):
+                    return "found", b
+                if self._RX_UNMUTE.search(cap):
+                    return "muted", None
+        except Exception as exc:  # noqa: BLE001
+            log.warning("mute: обход кнопок строки: %s", exc)
+        log.info("mute: прямой кнопки нет, подписи кнопок строки: %s", labels)
+        return "none", None
+
+    def _mute_via_row_menu(self, row, name: str) -> bool:
+        """Фолбэк: меню «Ещё»/«More» строки участника → пункт мьюта. При
+        неудаче логируем пункты меню (как в delete) и закрываем Escape."""
+        p = self.page
+        try:
+            row.locator('button[aria-label*="more" i], button[aria-label*="Ещё" i], '
+                        'button[aria-label*="еще" i]').last.click(timeout=2000)
+        except Exception:  # noqa: BLE001
+            log.info("mute: у %r нет ни кнопки мьюта, ни «Ещё»", name)
+            return False
+        p.wait_for_timeout(600)                # меню-портал успевает отрисоваться
+        items = p.locator('[role="menuitem"], [class*="dropdown"] a, [class*="menu"] li')
+        try:
+            for i in range(min(items.count(), 15)):
+                it = items.nth(i)
+                try:
+                    cap = (it.inner_text() or "").strip()
+                except Exception:  # noqa: BLE001
+                    continue
+                if self._RX_MUTE.search(cap):
+                    it.click(timeout=2000)
+                    log.info("mute: %r замьючен через меню строки (%r)", name, cap)
+                    return True
+        except Exception as exc:  # noqa: BLE001
+            log.warning("mute: обход меню строки: %s", exc)
+        texts = p.evaluate(
+            "() => [...document.querySelectorAll('[role=\"menuitem\"],li,"
+            "[class*=\"dropdown\"] *,[class*=\"menu\"] *')]"
+            ".map(e=>e.children.length===0?(e.innerText||'').trim():'')"
+            ".filter(t=>t&&t.length<30).slice(0,12)")
+        log.info("mute: пункт мьюта не найден у %r; в меню: %s", name, texts)
+        p.keyboard.press("Escape")
+        return False
 
     # ---- удаление сообщения ----
 

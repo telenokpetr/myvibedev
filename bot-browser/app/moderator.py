@@ -204,7 +204,7 @@ class BrowserModerator:
 
     POLL_INTERVAL = 1.0   # опрос чата, сек (2с не успевали за быстрым флудом)
     WARN_COOLDOWN = 60.0  # не предупреждать/мьютить одного автора чаще, сек
-    MUTE_ENABLED = False  # мьют ломает панель чата — доделать отдельно
+    MUTE_ENABLED = True   # мьют раз в кулдаун; панель чата возвращаем в finally
 
     def _warn_and_mute(self, web: ZoomWeb, sender: str, category: str) -> None:
         # Предупреждение шлём даже если автор не распознан (sender="чат") —
@@ -215,29 +215,34 @@ class BrowserModerator:
                         if now - t < self.WARN_COOLDOWN}
         why = "мат" if category == "profanity" else "спам"
         warn_key = sender if sender and sender != "чат" else f"__{category}"
-        if warn_key not in self._warned:
-            self._warned[warn_key] = now
-            who = f"{sender}, " if sender and sender != "чат" else ""
-            # За мат — «веди себя прилично», за спам — про бан (по запросу).
-            if category == "profanity":
-                text = f"⚠️ {who}веди себя прилично!"
-            else:
-                text = f"⚠️ {who}предупреждение за спам. Повторится — бан."
-            log.info("шлю предупреждение за %s (автор=%s)", why, sender)
-            try:
-                web.send_chat(text)
-            except Exception as exc:  # noqa: BLE001
-                log.warning("предупреждение не отправлено: %s", exc)
-        # Мьют временно отключён: открытие панели участников закрывает панель
-        # чата и ломает следующее удаление; кнопку мьюта в web-панели ещё надо
-        # выверить. Включить — MUTE_ENABLED=True, когда доделан.
+        if warn_key in self._warned:
+            return
+        self._warned[warn_key] = now
+        who = f"{sender}, " if sender and sender != "чат" else ""
+        # За мат — «веди себя прилично», за спам — про бан (по запросу).
+        if category == "profanity":
+            text = f"⚠️ {who}веди себя прилично!"
+        else:
+            text = f"⚠️ {who}предупреждение за спам. Повторится — бан."
+        log.info("шлю предупреждение за %s (автор=%s)", why, sender)
+        try:
+            web.send_chat(text)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("предупреждение не отправлено: %s", exc)
+        # Мьют под тем же кулдауном, что и предупреждение: при флуде нельзя
+        # открывать панель участников на каждое сообщение — это закрывает чат
+        # и ломает следующее удаление. Панель чата возвращаем всегда (finally).
         if self.MUTE_ENABLED and sender and sender != "чат":
             try:
                 if web.mute_participant(sender):
                     log.info("участник замьючен: %s", sender)
-                web.ensure_chat_open()   # вернуть панель чата после участников
             except Exception as exc:  # noqa: BLE001
                 log.warning("мьют не удался: %s", exc)
+            finally:
+                try:
+                    web.ensure_chat_open()   # вернуть панель чата после участников
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("панель чата не вернулась после мьюта: %s", exc)
 
     # ---- кулдаун повторных попыток ----
 
