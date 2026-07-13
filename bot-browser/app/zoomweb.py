@@ -274,10 +274,13 @@ class ZoomWeb:
         p = self.page
         try:
             p.locator('button[aria-label*="participants" i], '
-                      'button[aria-label*="частник" i]').first.click(timeout=3000)
-            p.wait_for_timeout(800)
-            row = p.locator('[class*="participants-item"], li, [role="listitem"]'
-                            ).filter(has_text=name).first
+                      'button[aria-label*="частник" i], button[aria-label*="manage participant" i]'
+                      ).first.click(timeout=3000)
+            p.wait_for_timeout(1000)
+            rows = p.locator('[class*="participants-item"], [class*="participant-item"], '
+                             'li[class*="participant"], [role="listitem"]')
+            log.info("mute: строк в панели участников: %d (ищу %r)", rows.count(), name)
+            row = rows.filter(has_text=name).first
             if row.count() == 0:
                 log.info("mute: участник %r не найден в панели", name)
                 return False

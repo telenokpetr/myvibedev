@@ -81,8 +81,11 @@ class SpamDetector:
         texts = self._texts[msg.sender]
         norm = msg.text.strip().lower()
         texts.append(norm)
-        if norm and list(texts).count(norm) >= self.repeat_limit:
-            return f"повтор: одно и то же ×{self.repeat_limit}"
+        # Короткие сообщения (1-3 символа, «а»/«ок»/«лол») — спам уже при 2
+        # повторах: ими флудят чаще, а длинный текст случайно не повторяют.
+        limit = 2 if len(norm) <= 3 else self.repeat_limit
+        if norm and list(texts).count(norm) >= limit:
+            return f"повтор: одно и то же ×{limit}"
         return None
 
 
