@@ -43,7 +43,7 @@ class BrowserModerator:
         self.spam = SpamDetector()
         self.events: deque = deque(maxlen=100)
         self.enabled = False
-        self.status = "idle"        # idle|joining|live|finished|error
+        self.status = "idle"        # idle|joining|waiting|live|finished|error
         self._web: ZoomWeb | None = None
         self._thread: threading.Thread | None = None
         self._seen: set[str] = set()
@@ -118,6 +118,17 @@ class BrowserModerator:
                 self.status = "error"
                 log.warning("вход не подтверждён")
                 return
+            # Зал ожидания раньше засчитывался за вход (URL уже /wc/…) —
+            # теперь ждём впуска и только потом доводим вход (аудио/камера/чат).
+            if web.in_waiting_room():
+                self.status = "waiting"
+                log.info("зал ожидания — жду впуска (status=waiting)")
+                while self.enabled and web.in_waiting_room():
+                    time.sleep(2.0)
+                if not self.enabled:
+                    return
+                log.info("впустили — довожу вход")
+            web.complete_join()
             self.status = "live"
             log.info("браузерная модерация включена")
             ticks = 0

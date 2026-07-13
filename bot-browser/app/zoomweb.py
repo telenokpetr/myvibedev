@@ -148,8 +148,28 @@ class ZoomWeb:
             except PWTimeout:
                 continue
         p.wait_for_timeout(6000)
-        # Подключить звук компьютера (НЕ «Продолжить без аудио» — иначе микрофон
-        # не транслируется). Фейковый микрофон отдаётся браузером из файла.
+        log.info("join: url=%s", p.url)
+        return "/wc/" in p.url
+
+    def in_waiting_room(self) -> bool:
+        """Зал ожидания или «организатор ещё не начал конференцию». URL там
+        уже /wc/… — по URL от митинга не отличить (из-за этого status был live
+        до впуска). Определяем по тексту страницы: тулбара и чата в зале нет."""
+        try:
+            body = (self.page.evaluate("() => document.body.innerText") or "").lower()
+        except Exception:  # noqa: BLE001
+            return False
+        keys = ("let you in", "waiting for the host", "разрешит вам войти",
+                "ожидание организатора", "зал ожидания", "скоро начнёт")
+        return any(k in body for k in keys)
+
+    def complete_join(self) -> bool:
+        """Шаги ПОСЛЕ реального входа (после впуска из зала ожидания) — в зале
+        этих кнопок нет, щёлкать их при join бессмысленно.
+        Подключить звук компьютера (НЕ «Продолжить без аудио» — иначе микрофон
+        не транслируется; фейковый микрофон отдаётся браузером из файла),
+        включить камеру, открыть панель чата."""
+        p = self.page
         for label in ("Войти в аудиоконференцию", "Join Audio", "Использовать звук",
                       "Computer Audio", "звук компьютера"):
             try:
@@ -161,8 +181,8 @@ class ZoomWeb:
         p.wait_for_timeout(4000)
         self._enable_media_in_meeting()
         ok = self._open_chat()
-        log.info("join: url=%s chat_open=%s", p.url, ok)
-        return "/wc/" in p.url
+        log.info("complete_join: url=%s chat_open=%s", p.url, ok)
+        return ok
 
     def _enable_media_in_meeting(self) -> None:
         self.ensure_video_on()
