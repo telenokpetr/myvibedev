@@ -94,6 +94,27 @@ services:
       - music-2:/data/music
       - zoomprofile-2:/home/zoom
 
+  # Браузерный бот: Zoom web-клиент через Playwright (headful под Xvfb).
+  # Один участник делает и модерацию чата (DOM), и музыку (fake-mic, в планах).
+  # Заменяет desktop-воркеров с их хрупким OCR/GUI — см. docs/RELIABILITY-PLAN.
+  bot-browser:
+    build: ./bot-browser
+    image: myvibedev-bot-browser
+    restart: unless-stopped
+    env_file: .env
+    init: true
+    shm_size: "1gb"
+    environment:
+      BOT_NAME: "Веб-модератор"
+      WEB_CALLBACK_URL: "http://web:8000"
+      SHOTS_DIR: "/data"
+    ports:
+      - "9100:9100"   # управляющий API браузерного бота
+    depends_on:
+      - web
+    volumes:
+      - botshots:/data
+
 volumes:
   db-data:
   recordings:
@@ -104,3 +125,4 @@ volumes:
   screenshots-2:
   music-2:
   zoomprofile-2:
+  botshots:
