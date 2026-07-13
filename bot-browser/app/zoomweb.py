@@ -44,13 +44,16 @@ def to_web_client(url: str) -> str:
 _JS_READ_CHAT = r"""
 () => {
   const out = [];
-  const items = document.querySelectorAll(
-    '[class*="new-chat-message"]');
+  const items = document.querySelectorAll('[class*="new-chat-message"]');
   let sender = 'чат';
   for (const el of items) {
-    // заголовок группы сообщений: «Имя to Everyone ЧЧ:ММ»
-    const head = el.querySelector('[class*="sender-name"], [class*="__sender"], [class*="chat-message-name"]');
-    if (head && head.innerText.trim()) sender = head.innerText.trim();
+    // Заголовок группы: «Имя Кому Все ЧЧ:ММ» (RU) / «Name to Everyone HH:MM».
+    // Ищем в самом элементе или его предыдущем соседе по этому паттерну.
+    const scan = [el, el.previousElementSibling].filter(Boolean);
+    for (const s of scan) {
+      const m = (s.innerText||'').match(/^\s*(.+?)\s+(?:Кому|to)\s+/);
+      if (m && m[1].trim() && m[1].trim().length < 40) { sender = m[1].trim(); break; }
+    }
     const body = el.querySelector('[class*="new-chat-message__body"], [class*="message-text"], [class*="__content"]');
     if (!body) continue;
     const text = (body.innerText || '').trim();
@@ -253,30 +256,31 @@ class ZoomWeb:
     # ---- мьют участника ----
 
     def mute_participant(self, name: str) -> bool:
-        """Замьютить участника по имени через панель «Участники»: навести на
-        строку → кнопка «Выключить звук»/Mute (или иконка микрофона)."""
+        """Замьютить участника по имени: открыть панель «Участники», навести
+        РЕАЛЬНЫМ hover на строку (кнопка мьюта всплывает только от курсора,
+        как «...» в чате) → кнопка «Выключить звук»/Mute."""
         p = self.page
         try:
-            # открыть панель участников
             p.locator('button[aria-label*="participants" i], '
                       'button[aria-label*="частник" i]').first.click(timeout=3000)
             p.wait_for_timeout(800)
-            done = p.evaluate(r"""
-            (name) => {
-              const rows = [...document.querySelectorAll('[class*="participants-item"], li, [role="listitem"]')];
-              for (const r of rows) {
-                if (!(r.innerText||'').includes(name)) continue;
-                r.dispatchEvent(new MouseEvent('mouseover', {bubbles:true}));
-                const btn = [...r.querySelectorAll('button')].find(b => {
-                  const l = (b.getAttribute('aria-label')||b.innerText||'').toLowerCase();
-                  return l.includes('mute') || l.includes('выключить звук');
-                });
-                if (btn) { btn.click(); return true; }
-              }
-              return false;
-            }
-            """, name)
-            return bool(done)
+            row = p.locator('[class*="participants-item"], li, [role="listitem"]'
+                            ).filter(has_text=name).first
+            if row.count() == 0:
+                log.info("mute: участник %r не найден в панели", name)
+                return False
+            row.scroll_into_view_if_needed(timeout=2000)
+            row.hover(timeout=2000)                # реальный hover
+            p.wait_for_timeout(250)
+            btn = row.locator(
+                'button[aria-label*="ute" i], button[aria-label*="ыключить звук" i]')
+            if btn.count() == 0:
+                # кнопка мьюта могла не всплыть/уже muted
+                log.info("mute: кнопка мьюта не найдена у %r", name)
+                return False
+            btn.first.click(timeout=2000)
+            log.info("mute: клик по кнопке мьюта у %r", name)
+            return True
         except Exception as exc:  # noqa: BLE001
             log.warning("mute_participant: %s", exc)
             return False
