@@ -75,15 +75,16 @@ class ZoomWeb:
     # ---- жизненный цикл ----
 
     def start(self) -> None:
+        from app import media
+        media.ensure_assets()
         self._pw = sync_playwright().start()
         self._browser = self._pw.chromium.launch(headless=False, args=[
-            "--use-fake-ui-for-media-stream",
-            "--use-fake-device-for-media-stream",
+            *media.launch_args(),   # виртуальные камера + микрофон из файлов
             "--disable-blink-features=AutomationControlled",
             "--no-sandbox",
         ])
         self._ctx = self._browser.new_context(
-            permissions=["microphone"],
+            permissions=["microphone", "camera"],
             viewport={"width": 1280, "height": 800},
             locale="ru-RU",
         )
@@ -117,6 +118,14 @@ class ZoomWeb:
             p.get_by_role("textbox", name="Ваше имя").fill(self._name, timeout=15000)
         except PWTimeout:
             log.warning("поле имени не найдено")
+        # В prejoin включить камеру (кнопка-тумблер видео), чтобы войти с видео.
+        for label in ("Включить показ видео", "Start Video", "Start video"):
+            try:
+                p.get_by_role("button", name=label, exact=False).first.click(timeout=3000)
+                log.info("камера включена в prejoin")
+                break
+            except PWTimeout:
+                continue
         for label in ("Войти", "Join", "Присоединиться"):
             try:
                 p.get_by_role("button", name=label, exact=False).first.click(timeout=5000)
@@ -124,16 +133,33 @@ class ZoomWeb:
             except PWTimeout:
                 continue
         p.wait_for_timeout(6000)
-        for label in ("Продолжить без аудио", "Join without", "Продолжить"):
+        # Подключить звук компьютера (НЕ «Продолжить без аудио» — иначе микрофон
+        # не транслируется). Фейковый микрофон отдаётся браузером из файла.
+        for label in ("Войти в аудиоконференцию", "Join Audio", "Использовать звук",
+                      "Computer Audio", "звук компьютера"):
             try:
                 p.get_by_role("button", name=label, exact=False).first.click(timeout=4000)
+                log.info("аудио подключено: %s", label)
                 break
             except PWTimeout:
                 continue
-        p.wait_for_timeout(6000)
+        p.wait_for_timeout(4000)
+        self._enable_media_in_meeting()
         ok = self._open_chat()
         log.info("join: url=%s chat_open=%s", p.url, ok)
         return "/wc/" in p.url
+
+    def _enable_media_in_meeting(self) -> None:
+        """В митинге убедиться, что камера и микрофон ВКЛючены (не muted).
+        Zoom web показывает «Включить видео»/«Включить звук», когда выключены."""
+        p = self.page
+        for label in ("Включить видео", "Start Video", "Start video"):
+            try:
+                p.get_by_role("button", name=label, exact=True).first.click(timeout=2500)
+                log.info("видео включено в митинге")
+                break
+            except PWTimeout:
+                continue
 
     def _open_chat(self) -> bool:
         # Панель чата в web рендерит сообщения только когда открыта. Кнопка —

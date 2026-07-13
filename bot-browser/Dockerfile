@@ -9,6 +9,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         x11-utils \
         pulseaudio \
         pulseaudio-utils \
+        ffmpeg \
+        mpv \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
