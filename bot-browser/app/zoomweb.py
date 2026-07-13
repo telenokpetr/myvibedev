@@ -209,31 +209,42 @@ class ZoomWeb:
     # ---- отправка предупреждения в чат ----
 
     def send_chat(self, text: str) -> bool:
-        """Написать сообщение в общий чат (предупреждение нарушителю).
-        Поле ввода Zoom web — contenteditable div (не textarea); отправка —
-        Enter, с проверкой, что поле очистилось (значит ушло)."""
+        """Написать в общий чат. Поле ввода Zoom web — contenteditable div внизу
+        панели чата. Ввод через настоящий клик+keyboard, отправка Enter; если
+        не ушло — кнопка отправки. Логируем, что нашли, чтобы видеть сбой."""
+        p = self.page
         try:
             self.ensure_chat_open()
-            box = self.page.locator(
-                'div[contenteditable="true"], [role="textbox"][contenteditable], '
-                'textarea[placeholder*="ообщение" i]').last
-            box.click(timeout=3000)
-            self.page.wait_for_timeout(150)
-            # ввод через клавиатуру (contenteditable надёжнее печатать, не fill)
-            self.page.keyboard.type(text, delay=8)
-            self.page.wait_for_timeout(150)
-            self.page.keyboard.press("Enter")
-            self.page.wait_for_timeout(400)
-            # если поле не очистилось — пробуем кнопку отправки (стрелка)
-            left = (box.inner_text() or "").strip() if box.count() else ""
-            if left and text[:6] in left:
+            box = p.locator(
+                'div[contenteditable="true"], [role="textbox"][contenteditable="true"], '
+                'textarea[placeholder*="ообщение" i]')
+            n = box.count()
+            if n == 0:
+                log.warning("send_chat: поле ввода не найдено")
+                return False
+            field = box.last                       # поле ввода — последний editable
+            field.click(timeout=3000)
+            p.wait_for_timeout(200)
+            p.keyboard.type(text, delay=10)
+            p.wait_for_timeout(200)
+            p.keyboard.press("Enter")
+            p.wait_for_timeout(500)
+            # проверка: текст ушёл (поле очистилось)?
+            remaining = ""
+            try:
+                remaining = (field.inner_text() or "").strip()
+            except Exception:  # noqa: BLE001
+                pass
+            if remaining and text[:5] in remaining:
+                # Enter не отправил — жмём кнопку отправки (иконка справа снизу)
                 try:
-                    self.page.locator(
-                        'button[aria-label*="Send" i], button[aria-label*="тправить" i]'
-                    ).last.click(timeout=1500)
+                    p.locator('button[aria-label*="Send" i], button[aria-label*="тправ" i], '
+                              'button[class*="send"]').last.click(timeout=1500)
+                    p.wait_for_timeout(300)
                 except PWTimeout:
-                    pass
-            log.info("предупреждение отправлено в чат")
+                    log.warning("send_chat: Enter не отправил, кнопки нет")
+                    return False
+            log.info("предупреждение отправлено: %r", text)
             return True
         except Exception as exc:  # noqa: BLE001
             log.warning("send_chat: %s", exc)

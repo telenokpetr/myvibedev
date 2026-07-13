@@ -203,25 +203,28 @@ class BrowserModerator:
     WARN_COOLDOWN = 60.0  # не предупреждать/мьютить одного автора чаще, сек
 
     def _warn_and_mute(self, web: ZoomWeb, sender: str, category: str) -> None:
-        if not sender or sender == "чат":
-            return
+        # Предупреждение шлём даже если автор не распознан (sender="чат") —
+        # кулдаун тогда по категории, чтобы не флудить. Мьют — только когда
+        # автор известен (нужно имя для панели участников).
         now = time.time()
         self._warned = {s: t for s, t in getattr(self, "_warned", {}).items()
                         if now - t < self.WARN_COOLDOWN}
-        if sender in self._warned:
-            return
-        self._warned[sender] = now
         why = "мат" if category == "profanity" else "спам"
-        try:
-            web.send_chat(f"⚠️ {sender}, предупреждение за {why}. "
-                          f"Повторится — бан.")
-        except Exception as exc:  # noqa: BLE001
-            log.warning("предупреждение не отправлено: %s", exc)
-        try:
-            if web.mute_participant(sender):
-                log.info("участник замьючен: %s", sender)
-        except Exception as exc:  # noqa: BLE001
-            log.warning("мьют не удался: %s", exc)
+        warn_key = sender if sender and sender != "чат" else f"__{category}"
+        if warn_key not in self._warned:
+            self._warned[warn_key] = now
+            who = f"{sender}, " if sender and sender != "чат" else ""
+            log.info("шлю предупреждение за %s (автор=%s)", why, sender)
+            try:
+                web.send_chat(f"⚠️ {who}предупреждение за {why}. Повторится — бан.")
+            except Exception as exc:  # noqa: BLE001
+                log.warning("предупреждение не отправлено: %s", exc)
+        if sender and sender != "чат":
+            try:
+                if web.mute_participant(sender):
+                    log.info("участник замьючен: %s", sender)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("мьют не удался: %s", exc)
 
     # ---- кулдаун повторных попыток ----
 
