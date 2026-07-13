@@ -366,9 +366,14 @@ class ZoomWeb:
         except PWTimeout:
             log.info("delete: «...» не поднялась для %r", text)
             return False
-        p.wait_for_timeout(400)
-        if not self._click_text_node("Удалить"):
-            log.info("delete: пункт «Удалить» не найден для %r", text)
+        p.wait_for_timeout(700)                # меню-портал успевает отрисоваться
+        if not self._click_menu_delete():
+            items = p.evaluate(
+                "() => [...document.querySelectorAll('[role=\"menuitem\"],li,"
+                "[class*=\"dropdown\"] *,[class*=\"menu\"] *')]"
+                ".map(e=>e.children.length===0?(e.innerText||'').trim():'')"
+                ".filter(t=>t&&t.length<25).slice(0,12)")
+            log.info("delete: пункт «Удалить» не найден для %r; в меню: %s", text, items)
             p.keyboard.press("Escape")
             return False
         p.wait_for_timeout(400)
@@ -478,3 +483,25 @@ class ZoomWeb:
           return false;
         }
         """, label))
+
+    def _click_menu_delete(self) -> bool:
+        """Клик пункта удаления в контекстном меню сообщения. Текст варьируется
+        по роли/языку: «Удалить» / «Удалить для всех» / «Delete». Берём видимый
+        листовой узел, чей текст начинается с «удал»/«delete»."""
+        return bool(self.page.evaluate(r"""
+        () => {
+          const re = /^(удалить|delete)/i;
+          const w = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+          while (w.nextNode()) {
+            const e = w.currentNode;
+            if (e.children.length !== 0) continue;
+            if (e.offsetParent === null) continue;         // только видимые
+            const t = (e.textContent||'').trim();
+            if (re.test(t) && t.length < 25) {
+              (e.closest('[role="menuitem"],li,button,a') || e).click();
+              return true;
+            }
+          }
+          return false;
+        }
+        """))
