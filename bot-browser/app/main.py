@@ -65,6 +65,39 @@ def moderation_test(req: ChatTestRequest):
     return {"detected": True, "category": res[0], "reason": res[1]}
 
 
+class RecordRequest(BaseModel):
+    target: str = "cloud"    # cloud|local
+
+
+@app.post("/recording/start")
+def recording_start(req: RecordRequest):
+    moderator.command("rec_start", req.target)
+    return {"queued": "rec_start", "target": req.target}
+
+
+@app.post("/recording/pause")
+def recording_pause():
+    moderator.command("rec_pause")
+    return {"queued": "rec_pause"}
+
+
+@app.post("/recording/resume")
+def recording_resume():
+    moderator.command("rec_resume")
+    return {"queued": "rec_resume"}
+
+
+@app.post("/recording/stop")
+def recording_stop():
+    moderator.command("rec_stop")
+    return {"queued": "rec_stop"}
+
+
+@app.get("/recording/status")
+def recording_status():
+    return {"recording": moderator.recording}
+
+
 @app.get("/screenshot")
 def screenshot():
     path = os.path.join(config.shots_dir, "last.png")

@@ -9,6 +9,7 @@
 
 import logging
 import os
+import queue
 import threading
 import time
 from collections import deque
@@ -49,6 +50,9 @@ class BrowserModerator:
         self._backlog_done = False
         self._failed_at: dict[str, float] = {}
         self._join_url = ""
+        self._commands: queue.Queue = queue.Queue()
+        self._cmd_results: dict[str, bool] = {}
+        self.recording = False
 
     # ---- управление ----
 
@@ -75,6 +79,32 @@ class BrowserModerator:
     def mod_status(self) -> dict:
         return {"enabled": self.enabled,
                 "events": [asdict(e) for e in list(self.events)[-30:]]}
+
+    # ---- команды записи (выполняются в потоке-владельце браузера) ----
+
+    def command(self, name: str, arg: str | None = None) -> None:
+        """Поставить команду в очередь потока браузера (Playwright thread-affine)."""
+        self._commands.put((name, arg))
+
+    def _drain_commands(self, web: ZoomWeb) -> None:
+        while True:
+            try:
+                name, arg = self._commands.get_nowait()
+            except queue.Empty:
+                return
+            try:
+                if name == "rec_start":
+                    self.recording = web.start_recording(arg or "cloud")
+                elif name == "rec_pause":
+                    web.pause_recording()
+                elif name == "rec_resume":
+                    web.resume_recording()
+                elif name == "rec_stop":
+                    web.stop_recording()
+                    self.recording = False
+                log.info("команда %s(%s) выполнена", name, arg)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("команда %s не удалась: %s", name, exc)
 
     # ---- рабочий поток (владелец браузера) ----
 
@@ -109,6 +139,7 @@ class BrowserModerator:
                 self.status = "finished"
 
     def _poll(self, web: ZoomWeb) -> None:
+        self._drain_commands(web)
         web.ensure_chat_open()   # панель могли не открыть при входе (зал ожидания)
         msgs = web.read_chat()
         new = [m for m in msgs if m["id"] not in self._seen]
@@ -136,7 +167,9 @@ class BrowserModerator:
         ckey = self._cooldown_key(msg.text)
         if ckey and self._failed_recently(ckey):
             return
-        deletable = category == "profanity" or reason.startswith("повтор")
+        # Удаляем мат и весь спам (флуд + повторы). Раньше флуд только флагался;
+        # по запросу — спам-сообщения тоже вычищаем из чата.
+        deletable = category in ("profanity", "spam")
         action = "flagged"
         if deletable:
             try:

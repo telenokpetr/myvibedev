@@ -150,16 +150,23 @@ class ZoomWeb:
         return "/wc/" in p.url
 
     def _enable_media_in_meeting(self) -> None:
-        """В митинге убедиться, что камера и микрофон ВКЛючены (не muted).
-        Zoom web показывает «Включить видео»/«Включить звук», когда выключены."""
-        p = self.page
-        for label in ("Включить видео", "Start Video", "Start video"):
-            try:
-                p.get_by_role("button", name=label, exact=True).first.click(timeout=2500)
-                log.info("видео включено в митинге")
-                break
-            except PWTimeout:
-                continue
+        self.ensure_video_on()
+
+    def ensure_video_on(self) -> None:
+        """Включить камеру, если выключена. Кнопка тумблера в тулбаре: когда
+        камера ВЫКЛ, её aria-label начинается со «start»/«начать» — по этому и
+        отличаем (кликать всегда нельзя — тумблер выключит включённую)."""
+        try:
+            off = self.page.locator(
+                'button[aria-label*="start my video" i], '
+                'button[aria-label*="start video" i], '
+                'button[aria-label*="начать видео" i], '
+                'button[aria-label*="включить видео" i]')
+            if off.count() > 0 and off.first.is_visible():
+                off.first.click(timeout=2000)
+                log.info("камера включена в митинге")
+        except Exception:  # noqa: BLE001
+            pass
 
     def _open_chat(self) -> bool:
         # Панель чата в web рендерит сообщения только когда открыта. Кнопка —
@@ -257,6 +264,87 @@ class ZoomWeb:
         }
         """, [mid, text])
         return not still
+
+    # ---- запись (host-контрол) ----
+
+    def _more_menu(self) -> None:
+        """Открыть меню «Подробнее»/«More» в тулбаре (там живут Record и пр.)."""
+        for label in ("Подробнее", "More", "More meeting control"):
+            try:
+                self.page.get_by_role("button", name=label, exact=False).first.click(timeout=2500)
+                self.page.wait_for_timeout(600)
+                return
+            except PWTimeout:
+                continue
+
+    def start_recording(self, target: str = "cloud") -> bool:
+        """Старт записи. target=cloud|local. Пункт в меню «Подробнее» или прямо
+        в тулбаре («Запись»/«Record»). Облако — «в облаке/to the Cloud»."""
+        p = self.page
+        # прямая кнопка в тулбаре
+        for label in ("Запись", "Record"):
+            try:
+                p.get_by_role("button", name=label, exact=True).first.click(timeout=2000)
+                break
+            except PWTimeout:
+                continue
+        else:
+            self._more_menu()
+            for label in ("Записать", "Запись", "Record"):
+                if self._click_text_node(label):
+                    break
+        p.wait_for_timeout(800)
+        # выбор облако/компьютер, если предложат
+        want = ("облак", "cloud") if target == "cloud" else ("компьютер", "computer", "локальн")
+        for key in want:
+            for node in ("Записать в облаке", "Record to the Cloud",
+                         "Записать на этот компьютер", "Record to this Computer"):
+                if key in node.lower() and self._click_text_node(node):
+                    p.wait_for_timeout(500)
+                    return True
+        # если меню выбора не появилось — запись уже пошла (одиночный вариант)
+        return self._is_recording()
+
+    def pause_recording(self) -> bool:
+        return self._rec_action(("Приостановить запись", "Pause Recording", "Пауза"))
+
+    def resume_recording(self) -> bool:
+        return self._rec_action(("Возобновить запись", "Resume Recording"))
+
+    def stop_recording(self) -> bool:
+        if not self._rec_action(("Остановить запись", "Stop Recording")):
+            return False
+        self.page.wait_for_timeout(600)
+        # подтверждение «Остановить»/«Yes» в диалоге
+        for label in ("Остановить", "Stop", "Да", "Yes"):
+            try:
+                self.page.get_by_role("button", name=label, exact=True).first.click(timeout=2500)
+                return True
+            except PWTimeout:
+                continue
+        return True
+
+    def _rec_action(self, labels: tuple[str, ...]) -> bool:
+        self._more_menu()
+        for label in labels:
+            if self._click_text_node(label):
+                return True
+        # некоторые сборки держат Pause/Stop у индикатора записи вверху
+        for label in labels:
+            try:
+                self.page.get_by_role("button", name=label, exact=False).first.click(timeout=1500)
+                return True
+            except PWTimeout:
+                continue
+        return False
+
+    def _is_recording(self) -> bool:
+        try:
+            return bool(self.page.evaluate(
+                "() => /Запись|Recording/i.test(document.body.innerText) && "
+                "!!document.querySelector('[aria-label*=\"ecording\" i],[class*=\"recording\"]')"))
+        except Exception:  # noqa: BLE001
+            return False
 
     def _click_text_node(self, label: str) -> bool:
         """Клик по листовому DOM-узлу с точным текстом (пункт меню Zoom)."""
