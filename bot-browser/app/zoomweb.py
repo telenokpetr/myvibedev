@@ -301,62 +301,52 @@ class ZoomWeb:
         except Exception:  # noqa: BLE001
             return 0
 
-    def delete_message(self, mid: str, text: str) -> bool:
-        """Найти сообщение по id/тексту, открыть «...», «Удалить», подтвердить.
+    def _message_locator(self, text: str):
+        """Locator верхнего (старейшего видимого) сообщения с точным текстом."""
+        import re as _re
+        return (self.page.locator('[class*="new-chat-message"]')
+                .filter(has_text=_re.compile(rf"^{_re.escape(text)}$")))
 
-        Возвращает True только если сообщение реально пропало из DOM."""
+    def delete_message(self, mid: str, text: str) -> bool:
+        """Удалить сообщение: РЕАЛЬНЫЙ Playwright-hover по строке (Zoom не
+        реагирует на синтетические mouseover — «...» поднимается только от
+        настоящего курсора) → кнопка «...» → «Удалить» → диалог. True только
+        если сообщение исчезло из DOM."""
         p = self.page
-        # навести на сообщение и нажать его кнопку опций «...»
-        opened = p.evaluate(r"""
-        ([mid, text]) => {
-          const items = [...document.querySelectorAll('[class*="new-chat-message"]')];
-          let target = null;
-          for (const el of items) {
-            const body = el.querySelector('[class*="new-chat-message__body"], [class*="message-text"], [class*="__content"]');
-            if (!body) continue;
-            const t = (body.innerText||'').trim();
-            const id = el.getAttribute('data-msg-id') || el.id;
-            if ((mid && id === mid) || t === text) { target = el; break; }
-          }
-          if (!target) return 'no-target';
-          target.dispatchEvent(new MouseEvent('mouseover', {bubbles:true}));
-          const opts = target.querySelectorAll('button.new-chat-message__options-button');
-          const dots = opts[opts.length - 1];  // последняя — «...»
-          if (!dots) return 'no-dots';
-          dots.click();
-          return 'clicked';
-        }
-        """, [mid, text])
-        if opened != "clicked":
-            log.info("delete: тулбар/сообщение не найдено (%s)", opened)
+        loc = self._message_locator(text)
+        try:
+            cnt = loc.count()
+        except Exception:  # noqa: BLE001
+            cnt = 0
+        if cnt == 0:
+            log.info("delete: сообщение %r не найдено в DOM", text)
             return False
-        p.wait_for_timeout(500)
-        # пункт «Удалить» в контекстном меню
+        el = loc.first
+        try:
+            el.scroll_into_view_if_needed(timeout=2000)
+            el.hover(timeout=3000)                 # НАСТОЯЩИЙ hover
+            p.wait_for_timeout(250)
+            dots = el.locator('button.new-chat-message__options-button').last
+            dots.hover(timeout=2000)
+            dots.click(timeout=2000)
+        except PWTimeout:
+            log.info("delete: «...» не поднялась для %r", text)
+            return False
+        p.wait_for_timeout(400)
         if not self._click_text_node("Удалить"):
-            log.info("delete: пункт «Удалить» не найден")
+            log.info("delete: пункт «Удалить» не найден для %r", text)
             p.keyboard.press("Escape")
             return False
-        p.wait_for_timeout(500)
-        # кнопка «Удалить» в диалоге подтверждения
+        p.wait_for_timeout(400)
         try:
-            p.get_by_role("button", name="Удалить", exact=True).first.click(timeout=4000)
+            p.get_by_role("button", name="Удалить", exact=True).last.click(timeout=3000)
         except PWTimeout:
-            # запасной путь — кнопка по умолчанию
             p.keyboard.press("Enter")
-        p.wait_for_timeout(800)
-        # проверяем, что сообщение исчезло
-        still = p.evaluate(r"""
-        ([mid, text]) => {
-          const items = [...document.querySelectorAll('[class*="new-chat-message"]')];
-          for (const el of items) {
-            const body = el.querySelector('[class*="new-chat-message__body"], [class*="message-text"], [class*="__content"]');
-            if (!body) continue;
-            if ((body.innerText||'').trim() === text) return true;
-          }
-          return false;
-        }
-        """, [mid, text])
-        return not still
+        p.wait_for_timeout(600)
+        gone = self._count_text(text) < cnt
+        log.info("delete %r: было %d, %s", text, cnt,
+                 "удалено" if gone else "НЕ удалилось")
+        return gone
 
     # ---- запись (host-контрол) ----
 
