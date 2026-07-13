@@ -49,6 +49,7 @@ class BrowserModerator:
         self._seen: set[str] = set()
         self._backlog_done = False
         self._failed_at: dict[str, float] = {}
+        self._warned: dict[str, float] = {}
         self._join_url = ""
         self._commands: queue.Queue = queue.Queue()
         self._cmd_results: dict[str, bool] = {}
@@ -167,16 +168,20 @@ class BrowserModerator:
         ckey = self._cooldown_key(msg.text)
         if ckey and self._failed_recently(ckey):
             return
-        # Удаляем мат и весь спам (флуд + повторы). Раньше флуд только флагался;
-        # по запросу — спам-сообщения тоже вычищаем из чата.
-        deletable = category in ("profanity", "spam")
+        # Удаляем мат и весь спам. Для повторов — «оставить последнее»
+        # (delete_duplicates), для мата/флуда — само сообщение.
         action = "flagged"
-        if deletable:
-            try:
-                if web.delete_message(msg.mid, msg.text):
+        try:
+            if category == "spam" and reason.startswith("повтор"):
+                if web.delete_duplicates(msg.text, keep_last=1) > 0:
                     action = "deleted"
-            except Exception as exc:  # noqa: BLE001
-                log.warning("удаление не удалось: %s", exc)
+            elif web.delete_message(msg.mid, msg.text):
+                action = "deleted"
+        except Exception as exc:  # noqa: BLE001
+            log.warning("удаление не удалось: %s", exc)
+        # Предупреждение в чат + мьют нарушителя — один раз на автора (кулдаун),
+        # чтобы не флудить самим и не мьютить повторно.
+        self._warn_and_mute(web, msg.sender, category)
         if ckey:
             if action == "flagged":
                 self._failed_at[ckey] = time.time()
@@ -188,6 +193,29 @@ class BrowserModerator:
         self.events.append(ev)
         self._push(ev)
         log.info("модерация: %s [%s] %s: %s", action, category, msg.sender, reason)
+
+    WARN_COOLDOWN = 60.0  # не предупреждать/мьютить одного автора чаще, сек
+
+    def _warn_and_mute(self, web: ZoomWeb, sender: str, category: str) -> None:
+        if not sender or sender == "чат":
+            return
+        now = time.time()
+        self._warned = {s: t for s, t in getattr(self, "_warned", {}).items()
+                        if now - t < self.WARN_COOLDOWN}
+        if sender in self._warned:
+            return
+        self._warned[sender] = now
+        why = "мат" if category == "profanity" else "спам"
+        try:
+            web.send_chat(f"⚠️ {sender}, предупреждение за {why}. "
+                          f"Повторится — бан.")
+        except Exception as exc:  # noqa: BLE001
+            log.warning("предупреждение не отправлено: %s", exc)
+        try:
+            if web.mute_participant(sender):
+                log.info("участник замьючен: %s", sender)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("мьют не удался: %s", exc)
 
     # ---- кулдаун повторных попыток ----
 

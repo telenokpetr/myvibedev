@@ -206,7 +206,84 @@ class ZoomWeb:
             log.warning("read_chat: %s", exc)
             return []
 
+    # ---- отправка предупреждения в чат ----
+
+    def send_chat(self, text: str) -> bool:
+        """Написать сообщение в общий чат (предупреждение нарушителю)."""
+        try:
+            self.ensure_chat_open()
+            box = self.page.locator(
+                '[contenteditable="true"], textarea[placeholder*="ообщение" i], '
+                '[aria-label*="ообщение" i]')
+            box.first.click(timeout=3000)
+            box.first.type(text, delay=10)
+            self.page.keyboard.press("Enter")
+            return True
+        except Exception as exc:  # noqa: BLE001
+            log.warning("send_chat: %s", exc)
+            return False
+
+    # ---- мьют участника ----
+
+    def mute_participant(self, name: str) -> bool:
+        """Замьютить участника по имени через панель «Участники»: навести на
+        строку → кнопка «Выключить звук»/Mute (или иконка микрофона)."""
+        p = self.page
+        try:
+            # открыть панель участников
+            p.locator('button[aria-label*="participants" i], '
+                      'button[aria-label*="частник" i]').first.click(timeout=3000)
+            p.wait_for_timeout(800)
+            done = p.evaluate(r"""
+            (name) => {
+              const rows = [...document.querySelectorAll('[class*="participants-item"], li, [role="listitem"]')];
+              for (const r of rows) {
+                if (!(r.innerText||'').includes(name)) continue;
+                r.dispatchEvent(new MouseEvent('mouseover', {bubbles:true}));
+                const btn = [...r.querySelectorAll('button')].find(b => {
+                  const l = (b.getAttribute('aria-label')||b.innerText||'').toLowerCase();
+                  return l.includes('mute') || l.includes('выключить звук');
+                });
+                if (btn) { btn.click(); return true; }
+              }
+              return false;
+            }
+            """, name)
+            return bool(done)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("mute_participant: %s", exc)
+            return False
+
     # ---- удаление сообщения ----
+
+    def delete_duplicates(self, text: str, keep_last: int = 1) -> int:
+        """Удалить повторяющиеся сообщения с одинаковым текстом, оставив
+        последние keep_last. Возвращает число удалённых."""
+        removed = 0
+        for _ in range(20):  # предохранитель от бесконечного цикла
+            n = self._count_text(text)
+            if n <= keep_last:
+                break
+            if not self.delete_message(None, text):   # удаляет верхнее совпадение
+                break
+            removed += 1
+        return removed
+
+    def _count_text(self, text: str) -> int:
+        try:
+            return int(self.page.evaluate(r"""
+            (text) => {
+              const items = [...document.querySelectorAll('[class*="new-chat-message"]')];
+              let n = 0;
+              for (const el of items) {
+                const b = el.querySelector('[class*="new-chat-message__body"], [class*="message-text"], [class*="__content"]');
+                if (b && (b.innerText||'').trim() === text) n++;
+              }
+              return n;
+            }
+            """, text))
+        except Exception:  # noqa: BLE001
+            return 0
 
     def delete_message(self, mid: str, text: str) -> bool:
         """Найти сообщение по id/тексту, открыть «...», «Удалить», подтвердить.
