@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from app.config import config
 from app.moderation import ChatMessage, ProfanityFilter, SpamDetector, classify
 from app.moderator import moderator
+from app.recorder import recorder
 
 app = FastAPI(title="Zoom Browser Bot", version="0.1.0")
 
@@ -71,31 +72,48 @@ class RecordRequest(BaseModel):
 
 @app.post("/recording/start")
 def recording_start(req: RecordRequest):
-    moderator.command("rec_start", req.target)
-    return {"queued": "rec_start", "target": req.target}
+    # local — ffmpeg-запись экрана бота (любой Zoom-план); cloud — облачная
+    # запись Zoom через host-меню (нужен платный/лицензированный аккаунт).
+    if req.target == "cloud":
+        moderator.command("rec_start", "cloud")
+        return {"mode": "zoom-cloud", "queued": True}
+    return {"mode": "screen", **recorder.start()}
 
 
 @app.post("/recording/pause")
-def recording_pause():
-    moderator.command("rec_pause")
-    return {"queued": "rec_pause"}
+def recording_pause(req: RecordRequest = RecordRequest()):
+    if req.target == "cloud":
+        moderator.command("rec_pause")
+        return {"mode": "zoom-cloud", "queued": True}
+    return {"mode": "screen", **recorder.pause()}
 
 
 @app.post("/recording/resume")
-def recording_resume():
-    moderator.command("rec_resume")
-    return {"queued": "rec_resume"}
+def recording_resume(req: RecordRequest = RecordRequest()):
+    if req.target == "cloud":
+        moderator.command("rec_resume")
+        return {"mode": "zoom-cloud", "queued": True}
+    return {"mode": "screen", **recorder.resume()}
 
 
 @app.post("/recording/stop")
-def recording_stop():
-    moderator.command("rec_stop")
-    return {"queued": "rec_stop"}
+def recording_stop(req: RecordRequest = RecordRequest()):
+    if req.target == "cloud":
+        moderator.command("rec_stop")
+        return {"mode": "zoom-cloud", "queued": True}
+    return {"mode": "screen", **recorder.stop()}
 
 
 @app.get("/recording/status")
 def recording_status():
-    return {"recording": moderator.recording}
+    return {"screen": recorder.status(), "zoom_cloud": moderator.recording}
+
+
+@app.get("/recordings")
+def recordings():
+    from app.recorder import REC_DIR
+    os.makedirs(REC_DIR, exist_ok=True)
+    return {"dir": REC_DIR, "files": sorted(os.listdir(REC_DIR))}
 
 
 @app.get("/screenshot")

@@ -108,6 +108,8 @@ services:
       BOT_NAME: "Веб-модератор"
       WEB_CALLBACK_URL: "http://web:8000"
       SHOTS_DIR: "/data"
+      RECORDINGS_DIR: "/data/recordings"
+      REC_GEOMETRY: "1280x800"
     ports:
       - "9100:9100"   # управляющий API браузерного бота
     depends_on:
@@ -115,6 +117,7 @@ services:
     volumes:
       - ./bot-browser:/app          # монтируем код (правки без пересборки образа)
       - botshots:/data
+      - browser-recordings:/data/recordings
     # без --reload: watchfiles на правку кода перезапускал процесс и ронял
     # live-сессию браузера (плюс плодил зомби-вкладки в митинге). Для перезапуска
     # после правок — docker compose restart bot-browser.
@@ -131,3 +134,4 @@ volumes:
   music-2:
   zoomprofile-2:
   botshots:
+  browser-recordings:
