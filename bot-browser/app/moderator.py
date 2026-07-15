@@ -36,7 +36,8 @@ class ModEvent:
 
 
 class BrowserModerator:
-    RETRY_COOLDOWN = 90.0
+    RETRY_COOLDOWN = 12.0   # неудачное удаление повторяем через ~12с (был 90)
+    MAX_DELETE_RETRIES = 3  # сколько раз повторять неудачное удаление сообщения
 
     def __init__(self) -> None:
         self.profanity = ProfanityFilter()
@@ -49,11 +50,17 @@ class BrowserModerator:
         self._seen: set[str] = set()
         self._backlog_done = False
         self._failed_at: dict[str, float] = {}
+        self._retry: dict[str, int] = {}     # id сообщения → число неудачных попыток
         self._warned: dict[str, float] = {}
+        self._pause_until = 0.0              # пауза цикла до этого времени (авто-снятие)
         self._join_url = ""
         self._commands: queue.Queue = queue.Queue()
         self._cmd_results: dict[str, bool] = {}
         self.recording = False
+        # ---- live-debug (без рестартов): выполнять JS/держать панель ----
+        self.debug_hold = False
+        self._eval_done = threading.Event()
+        self._eval_value = None
 
     # ---- управление ----
 
@@ -87,6 +94,16 @@ class BrowserModerator:
         """Поставить команду в очередь потока браузера (Playwright thread-affine)."""
         self._commands.put((name, arg))
 
+    def debug_eval(self, js: str):
+        """Выполнить JS на живой странице бота и вернуть результат (для DOM-
+        разведки без рестартов). Выполняется в потоке-владельце через очередь."""
+        self._eval_value = None
+        self._eval_done.clear()
+        self._commands.put(("eval", js))
+        if self._eval_done.wait(timeout=8):
+            return self._eval_value
+        return {"error": "timeout (браузер занят/не в митинге?)"}
+
     def _drain_commands(self, web: ZoomWeb) -> None:
         while True:
             try:
@@ -103,6 +120,23 @@ class BrowserModerator:
                 elif name == "rec_stop":
                     web.stop_recording()
                     self.recording = False
+                elif name == "mute":
+                    ok = web.mute_participant(arg or "")
+                    log.info("debug mute %r → %s", arg, ok)
+                elif name == "dump_participants":
+                    web.debug_dump_participants()
+                    # НЕ возвращаем чат сразу — если стоит пауза, панель
+                    # участников остаётся открытой для разведки через /debug/eval.
+                    if time.time() >= self._pause_until:
+                        web.ensure_chat_open()
+                elif name == "eval":
+                    try:
+                        self._eval_value = web.debug_eval(arg)
+                    except Exception as exc:  # noqa: BLE001
+                        self._eval_value = {"error": repr(exc)}
+                    finally:
+                        self._eval_done.set()
+                    continue  # eval логировать не нужно
                 log.info("команда %s(%s) выполнена", name, arg)
             except Exception as exc:  # noqa: BLE001
                 log.warning("команда %s не удалась: %s", name, exc)
@@ -157,6 +191,11 @@ class BrowserModerator:
 
     def _poll(self, web: ZoomWeb) -> None:
         self._drain_commands(web)
+        # Пауза цикла для live-разведки (напр. держать открытой панель
+        # участников). АВТО-снятие по таймеру — чтобы не повторить косяк с
+        # «залипшим» debug_hold, который молча остановил модерацию.
+        if time.time() < self._pause_until:
+            return
         web.ensure_chat_open()   # панель могли не открыть при входе (зал ожидания)
         msgs = web.read_chat()
         new = [m for m in msgs if m["id"] not in self._seen]
@@ -206,6 +245,10 @@ class BrowserModerator:
                 self._failed_at[ckey] = time.time()
             else:
                 self._failed_at.pop(ckey, None)
+        # РЕТРАЙ УБРАН: перечитывание неудалённых сообщений зацикливало цикл
+        # (сообщение, которое удалить НЕЛЬЗЯ — напр. чужое у со-хоста — долбилось
+        # каждую секунду и вешало браузер). Флейки ховера гасит _open_message_menu
+        # (3 попытки внутри), а кулдаун по тексту не даёт хаммерить.
         ev = ModEvent(sender=msg.sender, text=msg.text, category=category,
                       reason=reason, action=action,
                       ts=datetime.now(timezone.utc).isoformat())
@@ -230,9 +273,9 @@ class BrowserModerator:
             return
         self._warned[warn_key] = now
         who = f"{sender}, " if sender and sender != "чат" else ""
-        # За мат — «веди себя прилично», за спам — про бан (по запросу).
+        # За мат — «не ругайся пёс!», за спам — про бан (по запросу).
         if category == "profanity":
-            text = f"⚠️ {who}веди себя прилично!"
+            text = f"⚠️ {who}не ругайся пёс!"
         else:
             text = f"⚠️ {who}предупреждение за спам. Повторится — бан."
         log.info("шлю предупреждение за %s (автор=%s)", why, sender)

@@ -27,6 +27,10 @@ services:
     build: ./web
     restart: unless-stopped
     env_file: .env
+    environment:
+      # Веб-интерфейс управляет БРАУЗЕРНЫМ ботом (bot-browser:9100), а не старым
+      # desktop-воркером. Здесь живут /account/*, /session/*, модерация, запись.
+      BOT_WORKER_URLS: "http://bot-browser:9100"
     ports:
       - "8000:8000"
     depends_on:

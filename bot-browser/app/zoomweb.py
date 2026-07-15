@@ -89,28 +89,59 @@ class ZoomWeb:
 
     # ---- жизненный цикл ----
 
+    # Постоянный профиль (в томе /data) — чтобы бот не выглядел «чистым»
+    # безымянным браузером при каждом заходе (Zoom это ловит антибот-защитой:
+    # «Боты не могут присоединяться»). Куки/история сохраняются между заходами.
+    PROFILE_DIR = "/data/zoomprofile"
+    UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+          "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
+
     def start(self) -> None:
         from app import media
         media.ensure_assets()
         self._pw = sync_playwright().start()
-        self._browser = self._pw.chromium.launch(headless=False, args=[
-            *media.launch_args(),   # виртуальные камера + микрофон из файлов
-            "--disable-blink-features=AutomationControlled",
-            "--no-sandbox",
-        ])
-        self._ctx = self._browser.new_context(
+        # persistent_context = постоянный профиль (нет отдельного browser-объекта).
+        self._ctx = self._pw.chromium.launch_persistent_context(
+            self.PROFILE_DIR,
+            headless=False,
+            args=[
+                *media.launch_args(),   # виртуальные камера + микрофон из файлов
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+            ],
             permissions=["microphone", "camera"],
             viewport={"width": 1280, "height": 800},
             locale="ru-RU",
+            user_agent=self.UA,
         )
-        self.page = self._ctx.new_page()
+        # Прячем признаки автоматизации (navigator.webdriver и пр.) — до загрузки
+        # любой страницы, чтобы reCAPTCHA/антибот Zoom видел «человеческий» браузер.
+        self._ctx.add_init_script(
+            "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
+            "window.chrome=window.chrome||{runtime:{}};"
+            "Object.defineProperty(navigator,'languages',"
+            "{get:()=>['ru-RU','ru','en-US','en']});"
+            "Object.defineProperty(navigator,'plugins',{get:()=>[1,2,3,4,5]});"
+        )
+        self._browser = None
+        self.page = self._ctx.pages[0] if self._ctx.pages else self._ctx.new_page()
+        # Перехват JS-ошибок страницы — чтобы понять, не из-за скрипта ли не
+        # отрисовывается шаг пароля (форма пропадает после «Далее»).
+        self._console_errs: list[str] = []
+        try:
+            self.page.on("pageerror",
+                         lambda e: self._console_errs.append(f"PAGEERROR: {str(e)[:200]}"))
+            self.page.on("console", lambda m: (
+                m.type == "error" and self._console_errs.append(f"console.error: {m.text[:200]}")))
+        except Exception:  # noqa: BLE001
+            pass
 
     def stop(self) -> None:
-        for closer in (self._browser, self._pw):
+        for closer in (self._ctx, self._pw):
             try:
                 if closer is self._pw:
                     closer.stop()
-                else:
+                elif closer is not None:
                     closer.close()
             except Exception:  # noqa: BLE001
                 pass
@@ -141,15 +172,411 @@ class ZoomWeb:
                 break
             except PWTimeout:
                 continue
-        for label in ("Войти", "Join", "Присоединиться"):
-            try:
-                p.get_by_role("button", name=label, exact=False).first.click(timeout=5000)
+        # Кнопка входа: prejoin может дорисоваться позже (особенно после
+        # редиректа /start→/join) — ЖДЁМ её и кликаем с повтором, иначе бот
+        # молча зависает на «Введите информацию о встрече».
+        joined = False
+        for attempt in range(3):
+            for label in ("Войти", "Join", "Присоединиться", "Join Meeting"):
+                try:
+                    btn = p.get_by_role("button", name=label, exact=False).first
+                    btn.wait_for(state="visible", timeout=6000)
+                    btn.click(timeout=4000)
+                    log.info("join: клик «%s» (попытка %d)", label, attempt + 1)
+                    joined = True
+                    break
+                except PWTimeout:
+                    continue
+                except Exception:  # noqa: BLE001
+                    continue
+            if joined:
                 break
-            except PWTimeout:
-                continue
+            p.wait_for_timeout(2500)     # prejoin ещё грузится — ждём и пробуем снова
+        if not joined:
+            log.warning("join: кнопка входа так и не нажалась (застряли на prejoin)")
         p.wait_for_timeout(6000)
         log.info("join: url=%s", p.url)
         return "/wc/" in p.url
+
+    # ---- вход в Zoom-аккаунт (через веб-форму) ----
+
+    # ---- импорт готовой сессии (cookie от человека — обход reCAPTCHA) ----
+
+    @staticmethod
+    def _convert_cookies(raw: list) -> list:
+        """Cookie-Editor JSON → формат Playwright add_cookies."""
+        ss_map = {"no_restriction": "None", "none": "None", "unspecified": "Lax",
+                  "lax": "Lax", "strict": "Strict"}
+        out = []
+        for c in raw:
+            name, value = c.get("name"), c.get("value")
+            domain, path = c.get("domain"), c.get("path", "/")
+            if not name or value is None or not domain:
+                continue
+            ck: dict = {"name": name, "value": value, "domain": domain, "path": path}
+            exp = c.get("expirationDate")
+            if exp and not c.get("session"):
+                ck["expires"] = float(exp)
+            ck["httpOnly"] = bool(c.get("httpOnly", False))
+            secure = bool(c.get("secure", False))
+            ss = ss_map.get(str(c.get("sameSite") or "").lower(), "Lax")
+            if ss == "None":
+                secure = True          # Chrome требует Secure при SameSite=None
+            ck["secure"] = secure
+            ck["sameSite"] = ss
+            out.append(ck)
+        return out
+
+    def import_cookies_and_verify(self, raw: list) -> tuple[bool, str]:
+        """Вставить cookie в контекст (сохранятся в профиль) и проверить, что
+        бот авторизован (страница профиля не редиректит на вход). Возвращает
+        (ok, email/сообщение)."""
+        cookies = self._convert_cookies(raw)
+        if not cookies:
+            return False, "в файле нет пригодных cookie"
+        try:
+            self._ctx.add_cookies(cookies)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("add_cookies: %s", exc)
+            return False, f"не удалось вставить cookie: {exc}"
+        log.info("cookie вставлено: %d, проверяю вход…", len(cookies))
+        p = self.page
+        try:
+            p.goto("https://zoom.us/profile", wait_until="domcontentloaded", timeout=45000)
+            p.wait_for_timeout(3500)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("проверка профиля: %s", exc)
+        url = (p.url or "").lower()
+        self._shot("cookie_verify")
+        if "/signin" in url or "/login" in url:
+            return False, ("cookie не авторизуют (сессия истекла/невалидна или "
+                           "привязана к другому устройству)")
+        # Попробовать вытащить email/имя с профиля (не критично).
+        email = ""
+        try:
+            email = p.evaluate(r"""
+            () => {
+              const t = document.body.innerText || '';
+              const m = t.match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
+              return m ? m[0] : '';
+            }
+            """) or ""
+        except Exception:  # noqa: BLE001
+            pass
+        log.info("cookie: вход подтверждён, url=%s email=%r", p.url, email)
+        return True, (email or "Zoom (cookie-сессия)")
+
+    def goto_signin(self) -> None:
+        try:
+            self.page.goto("https://www.zoom.us/signin",
+                           wait_until="domcontentloaded", timeout=60000)
+            self.page.wait_for_timeout(2500)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("goto_signin: %s", exc)
+
+    def _login_state(self) -> str:
+        """Определить текущее состояние страницы входа по URL и тексту:
+        logged_in | otp | captcha | signin | unknown."""
+        p = self.page
+        url = (p.url or "").lower()
+        try:
+            body = (p.evaluate("() => document.body.innerText") or "").lower()
+        except Exception:  # noqa: BLE001
+            body = ""
+        # Вошли: увели с /signin на профиль/личный кабинет.
+        if ("/signin" not in url and "/login" not in url
+                and any(k in url for k in ("/profile", "/account", "/wc", "myaccount", "/home"))):
+            return "logged_in"
+        # OTP/подтверждение устройства.
+        otp_keys = ("verification code", "verify your identity", "one-time",
+                    "проверочный код", "код подтверждения", "введите код",
+                    "мы отправили", "enter the code", "verify the")
+        if any(k in body for k in otp_keys):
+            return "otp"
+        # Капча — автоматом не пройти.
+        try:
+            cap = p.locator('iframe[src*="recaptcha"], iframe[title*="recaptcha" i], '
+                            'iframe[src*="hcaptcha"], div.g-recaptcha')
+            if cap.count() and cap.first.is_visible():
+                return "captcha"
+        except Exception:  # noqa: BLE001
+            pass
+        if "/signin" in url or "/login" in url:
+            return "signin"
+        return "unknown"
+
+    # Форма входа Zoom — email-first (разведано 13.07): поле email type="text"
+    # (плейсхолдер «Электронная почта или номер телефона»), затем БЕЗЫМЯННАЯ
+    # кнопка «Далее» → появляется поле пароля. Кнопку по тексту не найти —
+    # продвигаемся Enter'ом. Пароль берём ТОЛЬКО видимый (в DOM есть скрытый
+    # дубль с tabindex=-1). Мешать может cookie-баннер — гасим заранее.
+    _SEL_EMAIL = ('input[name="email"], input#email, input[type="email"], '
+                  'input[placeholder*="лектронн" i], input[placeholder*="mail" i]')
+    _SEL_PW_VISIBLE = 'input[type="password"]:visible, input[name="password"]:visible'
+
+    def account_sign_in(self, email: str, password: str) -> str:
+        """Заполнить форму входа Zoom (email-first) и отправить. Возвращает:
+        'logged_in' | 'otp' | 'captcha' | 'error:<текст>'."""
+        p = self.page
+        try:
+            self.goto_signin()
+            log.info("вход: страница %s", p.url)
+            self._dismiss_cookies()
+            self._shot("1_signin")
+            # 1) email → поле #email (разведано). fill() вместо click (клик не
+            #    проходил: элемент «нестабилен»/перехват указателя; fill фокусирует
+            #    и печатает без этих проверок).
+            em = p.locator('#email, input[name="account"], input[name="email"], '
+                           'input[type="email"]').first
+            if em.count() == 0:
+                self._dump_login_form("нет поля email")
+                return "error:поле email не найдено (см. логи)"
+            try:
+                em.wait_for(state="visible", timeout=10000)
+            except PWTimeout:
+                pass
+            em.fill(email, timeout=8000)
+            em.press("Tab")           # blur → Zoom валидирует email, «Далее» готов
+            p.wait_for_timeout(1200)
+            self._shot("2_email")
+            # 2) продвинуть email-first: клик #signin_btn_next → ЖДЁМ поле
+            #    пароля ДОЛГО. Разведано: шаг пароля рендерится ~18-20с после
+            #    «Далее» (reCAPTCHA v3 генерит токен, SPA ждёт его под Xvfb).
+            pw = self._wait_password(2000)
+            if pw is None:
+                self._click_next_after_email(em)
+                pw = self._wait_password(30000)
+                self._shot("3_afternext")
+            if pw is None:
+                st = self._login_state()
+                if st == "captcha":
+                    self._shot("x_captcha")
+                    return "captcha"
+                self._dump_login_form("нет видимого поля пароля после email")
+                return "error:поле пароля не появилось (email-first не прошёл, см. логи)"
+            self._shot("4_password")
+            # 3) пароль — «человеческим» набором (движение мыши + задержки), это
+            #    поднимает балл reCAPTCHA v3 (она следит за поведением).
+            self._human_click(pw)
+            try:
+                pw.press_sequentially(password, delay=90)
+            except Exception:  # noqa: BLE001
+                pw.fill(password, timeout=8000)
+            p.wait_for_timeout(500)
+            # 4) submit кнопкой #js_btn_login, с авто-ретраем на ошибке reCAPTCHA
+            #    («Произошла ошибка ввода reCAPTCHA. Повторите попытку.»).
+            btn = p.locator("#js_btn_login").first
+            for attempt in range(3):
+                if btn.count():
+                    self._human_click(btn)
+                else:
+                    p.keyboard.press("Enter")
+                p.wait_for_timeout(3500)
+                self._shot(f"5_submit_{attempt}")
+                st = self._login_state()
+                if st in ("logged_in", "otp", "captcha"):
+                    log.info("вход: после submit — %s", st)
+                    return st
+                if self._recaptcha_error():
+                    log.info("вход: ошибка reCAPTCHA, повтор submit (%d/3)", attempt + 1)
+                    p.wait_for_timeout(2500)
+                    continue
+                break
+            return self._login_result_after_submit()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("account_sign_in: %s", exc)
+            return f"error:{exc}"
+
+    def _human_click(self, locator, timeout: int = 5000) -> bool:
+        """Клик с «человеческим» движением мыши к центру элемента (для балла
+        reCAPTCHA v3). Фолбэк — обычный click."""
+        p = self.page
+        try:
+            box = locator.bounding_box(timeout=timeout)
+            if box:
+                cx = box["x"] + box["width"] / 2
+                cy = box["y"] + box["height"] / 2
+                p.mouse.move(cx - 45, cy - 30, steps=8)
+                p.wait_for_timeout(120)
+                p.mouse.move(cx, cy, steps=12)
+                p.wait_for_timeout(160)
+                p.mouse.click(cx, cy)
+                return True
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            locator.click(timeout=timeout)
+            return True
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _recaptcha_error(self) -> bool:
+        """На странице тост «Произошла ошибка ввода reCAPTCHA»?"""
+        try:
+            body = (self.page.evaluate("() => document.body.innerText") or "").lower()
+        except Exception:  # noqa: BLE001
+            return False
+        return "recaptcha" in body and any(
+            k in body for k in ("ошибка", "повторите", "error", "try again"))
+
+    def _wait_password(self, timeout_ms: int):
+        """Дождаться ВИДИМОГО поля пароля (появляется на 2-м шаге email-first).
+        Возвращает Locator или None."""
+        p = self.page
+        waited, step = 0, 400
+        while waited < timeout_ms:
+            loc = p.locator(self._SEL_PW_VISIBLE).first
+            if loc.count() > 0:
+                return loc
+            p.wait_for_timeout(step)
+            waited += step
+        return None
+
+    def _dismiss_cookies(self) -> None:
+        """Погасить cookie-баннер (жмём «Отклонить», приватность по умолчанию)."""
+        for name in ("Отклонить файлы cookie", "Отклонить", "Decline", "Reject"):
+            try:
+                self.page.get_by_role("button", name=name, exact=False).first.click(timeout=1500)
+                log.info("вход: cookie-баннер закрыт (%s)", name)
+                return
+            except PWTimeout:
+                continue
+            except Exception:  # noqa: BLE001
+                return
+
+    def _click_next_after_email(self, em) -> bool:
+        """Нажать кнопку «Далее» email-first — Zoom: id='signin_btn_next'
+        (разведано 13.07). Фолбэки — по id-подстроке/submit."""
+        p = self.page
+        for sel in ("#signin_btn_next", "button#signin_btn_next",
+                    'button[id*="next" i]', 'button[type="submit"]'):
+            try:
+                b = p.locator(sel).first
+                if b.count() and b.is_visible():
+                    b.click(timeout=3000)
+                    log.info("вход: клик по кнопке продолжения (%s)", sel)
+                    return True
+            except Exception:  # noqa: BLE001
+                continue
+        log.info("вход: кнопка продолжения email-first не найдена")
+        return False
+
+    def _dump_login_form(self, why: str) -> None:
+        """DEBUG: разобрать, ПОЧЕМУ нет шага пароля — рендер не догрузился или
+        блок reCAPTCHA. Ждём ещё, снимаем поздний скриншот, анализируем DOM и
+        JS-ошибки консоли."""
+        p = self.page
+        log.warning("вход: %s; URL=%s; текст: %s", why, p.url, self._page_snippet())
+        p.wait_for_timeout(6000)                 # дать шансу дорисоваться
+        self._shot("6_late")
+        try:
+            info = p.evaluate(r"""
+            () => ({
+              htmlLen: document.documentElement.innerHTML.length,
+              hasPasswordInput: !!document.querySelector('input[type=password]'),
+              inputCount: document.querySelectorAll('input').length,
+              hasRecaptchaIframe: !!document.querySelector('iframe[src*="recaptcha"]'),
+              grecaptcha: typeof window.grecaptcha,
+              readyState: document.readyState,
+              signinHtml: (document.querySelector('#signinContainer, [class*="signin"], #app, main')||{outerHTML:''})
+                          .outerHTML.replace(/\s+/g,' ').slice(0,700)
+            })
+            """)
+            log.warning("вход АНАЛИЗ: pwInput=%s inputs=%s recaptchaIframe=%s "
+                        "grecaptcha=%s ready=%s htmlLen=%s",
+                        info.get("hasPasswordInput"), info.get("inputCount"),
+                        info.get("hasRecaptchaIframe"), info.get("grecaptcha"),
+                        info.get("readyState"), info.get("htmlLen"))
+            log.warning("вход АНАЛИЗ signin-контейнер: %s", info.get("signinHtml"))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("вход: анализ DOM не удался: %s", exc)
+        errs = getattr(self, "_console_errs", [])
+        if errs:
+            log.warning("вход JS-ошибки консоли (%d): %s", len(errs), errs[-12:])
+        else:
+            log.warning("вход: JS-ошибок консоли не зафиксировано")
+        try:
+            self.screenshot("/data/last.png")
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            info = p.evaluate(r"""
+            () => {
+              const vis = el => { const r=el.getBoundingClientRect();
+                return r.width>0 && r.height>0 && getComputedStyle(el).visibility!=='hidden'; };
+              const inp = [...document.querySelectorAll('input')].slice(0,10).map(i =>
+                ({type:i.type,name:i.name,id:i.id,ph:i.placeholder,vis:vis(i)}));
+              const btn = [...document.querySelectorAll('button')].slice(0,12).map(b =>
+                ({tx:(b.innerText||'').trim().slice(0,20),al:b.getAttribute('aria-label'),
+                  id:b.id,vis:vis(b)}));
+              return {inputs:inp, buttons:btn};
+            }
+            """)
+            log.warning("вход DUMP inputs: %s", info.get("inputs"))
+            log.warning("вход DUMP buttons: %s", info.get("buttons"))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("вход: дамп формы не удался: %s", exc)
+
+    def _login_result_after_submit(self) -> str:
+        """Опросить состояние несколько секунд после отправки формы входа."""
+        p = self.page
+        for _ in range(10):
+            st = self._login_state()
+            if st in ("logged_in", "otp", "captcha"):
+                log.info("вход: состояние после отправки — %s (%s)", st, p.url)
+                return st
+            p.wait_for_timeout(1000)
+        # Остались на signin — вероятно, неверные данные/ошибка на странице.
+        snap = self._page_snippet()
+        log.info("вход: остались на signin, текст: %s", snap)
+        return "error:вход не подтверждён (неверные данные или доп. проверка)"
+
+    def account_submit_otp(self, code: str) -> str:
+        """Ввести OTP-код на странице подтверждения. 'logged_in' | 'error:<текст>'."""
+        p = self.page
+        try:
+            box = p.locator('input[autocomplete="one-time-code"], '
+                            'input[name*="code" i], input[inputmode="numeric"], '
+                            'input[maxlength="6"]').first
+            if box.count() == 0:
+                return "error:поле кода не найдено"
+            box.click(timeout=4000)
+            box.fill(code, timeout=4000)
+            for lbl in ("Verify", "Submit", "Подтвердить", "Continue", "Продолжить"):
+                try:
+                    p.get_by_role("button", name=lbl, exact=False).first.click(timeout=2500)
+                    break
+                except PWTimeout:
+                    continue
+            else:
+                p.keyboard.press("Enter")
+            p.wait_for_timeout(3000)
+            for _ in range(8):
+                st = self._login_state()
+                if st == "logged_in":
+                    return "logged_in"
+                if st == "captcha":
+                    return "error:капча после кода — вход невозможен автоматически"
+                p.wait_for_timeout(1000)
+            return "error:код не принят или требуется доп. проверка"
+        except Exception as exc:  # noqa: BLE001
+            log.warning("account_submit_otp: %s", exc)
+            return f"error:{exc}"
+
+    def _shot(self, tag: str) -> None:
+        """DEBUG: скриншот шага входа в /data/login_<tag>.png (для разбора)."""
+        try:
+            self.screenshot(f"/data/login_{tag}.png")
+            log.info("вход: скриншот %s", tag)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _page_snippet(self) -> str:
+        try:
+            t = self.page.evaluate("() => document.body.innerText") or ""
+            return " ".join(t.split())[:200]
+        except Exception:  # noqa: BLE001
+            return ""
 
     def in_waiting_room(self) -> bool:
         """Зал ожидания или «организатор ещё не начал конференцию». URL там
@@ -206,14 +633,19 @@ class ZoomWeb:
     def _open_chat(self) -> bool:
         # Панель чата в web рендерит сообщения только когда открыта. Кнопка —
         # aria «open the chat panel» (может нести суффикс «N unread message»).
+        # ВАЖНО: тулбар Zoom прячется при простое (в Xvfb мышь не двигается) —
+        # без «шевеления» мышью кнопки чата нет в DOM и чат не открыть.
+        self._reveal_toolbar()
         try:
             self.page.locator(
                 'button[aria-label*="chat panel"], button[aria-label*="open the chat"], '
-                'button[aria-label*="Чат"]'
-            ).first.click(timeout=8000)
+                'button[aria-label*="Чат" i], button[aria-label*="chat" i], '
+                'button[class*="footer-chat-button"] , div[class*="footer-chat"] button'
+            ).first.click(timeout=6000)
             self.page.wait_for_timeout(1500)
             return True
         except PWTimeout:
+            log.info("chat: кнопка чата не найдена (тулбар скрыт?)")
             return False
 
     def chat_is_open(self) -> bool:
@@ -305,34 +737,134 @@ class ZoomWeb:
         aria-label — ищем и по видимому тексту; «Unmute» = уже замьючен,
         считаем успехом. Нет прямой кнопки — фолбэк через меню «Ещё» строки.
         Панель чата после нас возвращает вызывающий (ensure_chat_open)."""
-        p = self.page
         try:
-            p.locator('button[aria-label*="participants" i], '
-                      'button[aria-label*="частник" i], button[aria-label*="manage participant" i]'
-                      ).first.click(timeout=3000)
-            p.wait_for_timeout(1000)
-            rows = p.locator('[class*="participants-item"], [class*="participant-item"], '
-                             'li[class*="participant"], [role="listitem"]')
-            log.info("mute: строк в панели участников: %d (ищу %r)", rows.count(), name)
-            row = rows.filter(has_text=name).first
-            if row.count() == 0:
-                log.info("mute: участник %r не найден в панели", name)
-                return False
-            row.scroll_into_view_if_needed(timeout=2000)
-            row.hover(timeout=2000)                # реальный hover
-            p.wait_for_timeout(300)
-            state, btn = self._find_mute_button(row)
-            if state == "muted":
-                log.info("mute: %r уже замьючен", name)
-                return True
-            if state == "found":
-                btn.click(timeout=2000)
-                log.info("mute: клик по кнопке мьюта у %r", name)
-                return True
-            return self._mute_via_row_menu(row, name)
+            # Панель участников не отдаёт ростер автоматизации — мьютим через
+            # ВИДЕО-ПЛИТКУ участника (hover → «...» → «Выключить звук»).
+            return self._mute_via_tile(name)
         except Exception as exc:  # noqa: BLE001
             log.warning("mute_participant: %s", exc)
             return False
+
+    def _mute_via_tile(self, name: str) -> bool:
+        """Мьют через видео-плитку участника (host-контрол). Наводим РЕАЛЬНЫЙ
+        hover на плитку → всплывает «...»/меню → «Выключить звук»/Mute."""
+        p = self.page
+        self._reveal_toolbar()
+        # Плитка участника: контейнер видео с его именем (в футере или alt img).
+        tile = p.locator('[class*="video-avatar__avatar"]').filter(has_text=name).first
+        if tile.count() == 0:
+            tile = p.locator(f'[class*="video-avatar"]:has(img[alt="{name}"])').first
+        if tile.count() == 0:
+            log.info("mute-tile: плитка %r не найдена", name)
+            return False
+        try:
+            tile.scroll_into_view_if_needed(timeout=2000)
+            tile.hover(timeout=2000)
+            p.wait_for_timeout(500)
+        except Exception:  # noqa: BLE001
+            pass
+        # Кнопки, всплывшие на плитке (разведано: у замьюченного — «Попросить
+        # включить звук», у говорящего — «Выключить звук», плюс «More managing
+        # options» — меню «...»).
+        labels: list = []
+        try:
+            labels = tile.evaluate(
+                "el => [...el.querySelectorAll('button,[role=\"button\"]')]"
+                ".map(b => (b.getAttribute('aria-label')||b.innerText||'').trim()).slice(0,10)")
+            log.info("mute-tile: кнопки на плитке %r: %s", name, labels)
+        except Exception:  # noqa: BLE001
+            pass
+        # Уже замьючен? («Попросить включить звук» / «Ask to Unmute») — цель
+        # достигнута, ничего не жмём (иначе РАЗмьютим человека).
+        for lb in labels:
+            if self._RX_UNMUTE.search(lb) or "опросить включить" in lb:
+                log.info("mute-tile: %r уже замьючен — ок", name)
+                return True
+        # Прямая кнопка «Выключить звук»/Mute на плитке.
+        btns = tile.locator('button, [role="button"]')
+        for i in range(min(btns.count(), 10)):
+            b = btns.nth(i)
+            try:
+                cap = (b.get_attribute("aria-label") or b.inner_text() or "").strip()
+            except Exception:  # noqa: BLE001
+                continue
+            if self._RX_MUTE.search(cap):
+                b.click(timeout=1800)
+                log.info("mute-tile: %r замьючен кнопкой на плитке (%r)", name, cap)
+                return True
+        # Иначе — открыть меню «...» плитки и выбрать «Выключить звук».
+        menu = tile.locator('button[aria-label*="more" i], button[aria-label*="Ещё" i], '
+                            'button[aria-label*="еще" i], button[aria-label*="menu" i], '
+                            'button[class*="more"]')
+        if menu.count() == 0:
+            log.info("mute-tile: у плитки %r нет ни кнопки мьюта, ни «...»", name)
+            return False
+        try:
+            menu.last.click(timeout=1800)
+        except Exception:  # noqa: BLE001
+            log.info("mute-tile: не кликнулось «...» у %r", name)
+            return False
+        p.wait_for_timeout(600)
+        # Пункт «Выключить звук»/Mute в контекст-меню плитки.
+        items = p.locator('[role="menuitem"], [class*="dropdown"] li, [class*="menu"] li, '
+                          '[class*="menu"] a')
+        for i in range(min(items.count(), 20)):
+            try:
+                cap = (items.nth(i).inner_text() or "").strip()
+            except Exception:  # noqa: BLE001
+                continue
+            if self._RX_MUTE.search(cap):
+                items.nth(i).click(timeout=1800)
+                log.info("mute-tile: %r замьючен через меню плитки (%r)", name, cap)
+                return True
+        texts = p.evaluate(
+            "() => [...document.querySelectorAll('[role=\"menuitem\"],li,[class*=\"menu\"] *')]"
+            ".map(e=>e.children.length===0?(e.innerText||'').trim():'')"
+            ".filter(t=>t&&t.length<30).slice(0,15)")
+        log.info("mute-tile: пункт мьюта не найден у %r; в меню: %s", name, texts)
+        p.keyboard.press("Escape")
+        return False
+
+    def _reveal_toolbar(self) -> None:
+        """Показать нижний тулбар Zoom — он прячется при простое (в Xvfb мышь
+        не двигается), из-за чего кнопки панелей исчезают из DOM."""
+        for xy in ((640, 795), (400, 780), (640, 760)):
+            try:
+                self.page.mouse.move(*xy)
+                self.page.wait_for_timeout(150)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _participant_row(self, name: str):
+        """Строку участника ищем НЕ по угадываемому классу (он даёт 0), а по
+        имени: сперва пробуем контейнеры-кандидаты с фильтром по тексту, затем
+        фолбэк — узел с именем → ближайший предок, содержащий кнопки. Возвращает
+        Locator строки или None (с логом)."""
+        p = self.page
+        rows = p.locator('[class*="participants-item"], [class*="participant-item"], '
+                         'li[class*="participant"], [role="listitem"], '
+                         '[class*="participants-ul"] > *')
+        cnt = rows.count()
+        row = rows.filter(has_text=name).first
+        if cnt and row.count():
+            log.info("mute: строка по классу-контейнеру (всего строк %d), имя %r", cnt, name)
+            return row
+        # Фолбэк: привязка к тексту имени → ближайший предок с кнопкой.
+        log.info("mute: строк по классу нет (%d) — ищу %r по тексту имени", cnt, name)
+        try:
+            node = p.get_by_text(name, exact=False).last
+            if node.count() == 0:
+                log.info("mute: имя %r не найдено на странице", name)
+                return None
+            row = node.locator(
+                'xpath=ancestor-or-self::*[.//button or .//*[@role="button"]][1]')
+            if row.count() == 0:
+                log.info("mute: у %r нет предка с кнопками (строка не распознана)", name)
+                return None
+            return row.first
+        except Exception as exc:  # noqa: BLE001
+            log.warning("mute: поиск строки по имени %r: %s", name, exc)
+            return None
 
     def _find_mute_button(self, row):
         """Кнопка мьюта среди кнопок строки — по aria-label И видимому тексту.
@@ -391,6 +923,146 @@ class ZoomWeb:
         p.keyboard.press("Escape")
         return False
 
+    def debug_eval(self, js: str):
+        """DEBUG: выполнить произвольный JS на странице бота и вернуть результат.
+        js — тело функции-стрелки, напр. '() => document.title'."""
+        return self.page.evaluate(js)
+
+    def debug_dump_participants(self) -> None:
+        """DEBUG: открыть панель участников и вывести в лог реальную структуру —
+        сработал ли клик по кнопке панели и КАКИЕ элементы реально являются
+        строками участников (tag+class+role+текст). По этому дампу выверяется
+        селектор строк (сейчас находит 0)."""
+        p = self.page
+        try:
+            # Чат занимает правый док и мешает раскрыться панели участников —
+            # сперва закрываем чат.
+            try:
+                p.locator('button[aria-label*="chat panel" i], '
+                          'button[aria-label*="Чат" i], '
+                          'div[class*="footer-chat"] button').first.click(timeout=2500)
+                p.wait_for_timeout(900)
+                log.info("DUMP: чат закрыт перед открытием участников")
+            except Exception:  # noqa: BLE001
+                pass
+            # Тулбар Zoom прячется при простое — «шевелим» мышью, чтобы показать.
+            for xy in ((640, 795), (400, 780), (640, 760)):
+                try:
+                    p.mouse.move(*xy)
+                    p.wait_for_timeout(200)
+                except Exception:  # noqa: BLE001
+                    pass
+            # НЕ по «частник» — оно матчит «Оставить Участник» из диалога
+            # конфликта хоста. Берём именно footer-кнопку участников.
+            toggles = p.locator('div[class*="footer-participants-button"] button, '
+                                 'button[class*="footer-participants"], '
+                                 'button[aria-label*="manage participant" i], '
+                                 'button[aria-label*="participants list" i]')
+            log.info("DUMP: кнопок-панели участников найдено: %d", toggles.count())
+            if toggles.count():
+                al0 = ""
+                try:
+                    al0 = toggles.first.get_attribute("aria-label") or ""
+                except Exception:  # noqa: BLE001
+                    pass
+                log.info("DUMP: кликаю кнопку участников aria=%r", al0)
+                toggles.first.click(timeout=3000)
+            p.wait_for_timeout(1800)
+            self.screenshot("/data/last.png")   # увидеть панель глазами
+            panel = p.evaluate(r"""
+            () => {
+              // Ищем контейнер, где реально есть список участников: элемент с
+              // несколькими потомками, содержащими имена (по aria-label кнопок
+              // «... more» участников или классам-строкам).
+              const sels=['[class*="participants-item"]','[class*="participants-li"]',
+                '[class*="participants-ul"]','[class*="participants-list"]',
+                '[class*="participants-row"]','[class*="participant-item"]',
+                '[class*="attendee"]','li[class*="participant"]','[role="listitem"]'];
+              const counts={};
+              for(const s of sels){const n=document.querySelectorAll(s).length; if(n)counts[s]=n;}
+              // Кнопки «more»/мьют внутри строк участников (появляются у ростера):
+              const rowBtns=[...document.querySelectorAll('button')]
+                .filter(b=>/more options for|mute\b|выключить звук|unmute/i.test(b.getAttribute('aria-label')||''))
+                .map(b=>'al='+(b.getAttribute('aria-label')||'').slice(0,40)+
+                     ' cl='+(b.className||'').toString().slice(0,35)).slice(0,12);
+              // Сырой HTML первого найденного контейнера-списка:
+              let html='нет';
+              for(const s of sels){const e=document.querySelector(s);
+                if(e){const par=e.closest('ul,[class*="list"],[class*="section"]')||e.parentElement;
+                  html=(par.outerHTML||'').replace(/\s+/g,' ').slice(0,1500); break;}}
+              return {counts, rowBtns, html};
+            }
+            """)
+            log.info("DUMP ростер-счётчики: %s", panel.get("counts"))
+            log.info("DUMP ростер-кнопки: %s", panel.get("rowBtns"))
+            log.info("DUMP ростер-HTML: %s", panel.get("html"))
+            # Все кнопки мьюта/меню в DOM (часто есть до hover, просто скрыты).
+            btns = p.evaluate(r"""
+            () => {
+              const out = [];
+              for (const b of document.querySelectorAll('button,[role="button"]')) {
+                const al = b.getAttribute('aria-label')||'';
+                const ti = b.getAttribute('title')||'';
+                const tx = (b.innerText||'').trim();
+                if (/mute|unmute|выключить звук|включить звук|more|ещё|еще/i.test(al+' '+ti+' '+tx)) {
+                  out.push('al='+al.slice(0,30)+' ti='+ti.slice(0,20)+
+                           ' tx='+tx.slice(0,20)+' cl='+(b.className||'').toString().slice(0,40));
+                }
+              }
+              return out.slice(0, 25);
+            }
+            """)
+            log.info("DUMP mute/more-кнопок: %d", len(btns))
+            for line in btns:
+                log.info("DUMP btn %s", line)
+            # 1) Структурные контейнеры списка (role) — покажет обёртку строк.
+            roles = p.evaluate(r"""
+            () => {
+              const out = [];
+              for (const el of document.querySelectorAll(
+                  '[role="list"],[role="listbox"],[role="tree"],[role="grid"],'+
+                  '[role="row"],[role="listitem"],[role="treeitem"],[role="gridcell"]')) {
+                const cls = (el.className||'').toString().slice(0,50);
+                const txt = (el.innerText||'').replace(/\n/g,' ').trim().slice(0,30);
+                out.push(el.tagName.toLowerCase()+'.'+cls+
+                         '[role='+el.getAttribute('role')+'] :: '+txt);
+              }
+              return out.slice(0, 30);
+            }
+            """)
+            log.info("DUMP roles: %d", len(roles))
+            for line in roles:
+                log.info("DUMP role %s", line)
+            # 2) Цепочка предков от ИМЕНИ бота — прямой путь к классу строки.
+            chain = p.evaluate(r"""
+            (name) => {
+              let target = null;
+              for (const el of document.querySelectorAll('span,div,a,p')) {
+                const t = (el.innerText||'').trim();
+                if (t.includes(name) && t.length < 40 && el.children.length === 0) {
+                  target = el; break;
+                }
+              }
+              if (!target) return ['имя '+name+' не найдено как отдельный узел'];
+              const chain = [];
+              let el = target;
+              for (let i = 0; i < 7 && el; i++) {
+                const cls = (el.className||'').toString().slice(0,55);
+                const role = el.getAttribute('role')||'';
+                const nb = el.querySelectorAll('button,[role="button"]').length;
+                chain.push('L'+i+' '+el.tagName.toLowerCase()+'.'+cls+
+                           (role?'[role='+role+']':'')+' btns='+nb);
+                el = el.parentElement;
+              }
+              return chain;
+            }
+            """, self._name)
+            log.info("DUMP chain от имени %r:", self._name)
+            for line in chain:
+                log.info("DUMP chain %s", line)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("debug_dump_participants: %s", exc)
+
     # ---- удаление сообщения ----
 
     def delete_duplicates(self, text: str, keep_last: int = 1) -> int:
@@ -410,11 +1082,14 @@ class ZoomWeb:
         try:
             return int(self.page.evaluate(r"""
             (text) => {
-              const items = [...document.querySelectorAll('[class*="new-chat-message"]')];
+              // По КОНТЕЙНЕРАМ строк (одна на сообщение) — иначе вложенные узлы
+              // завышают счётчик в несколько раз.
+              const items = [...document.querySelectorAll('[class*="new-chat-message__container"]')];
               let n = 0;
               for (const el of items) {
-                const b = el.querySelector('[class*="new-chat-message__body"], [class*="message-text"], [class*="__content"]');
-                if (b && (b.innerText||'').trim() === text) n++;
+                const b = el.querySelector('[class*="new-chat-message__text-content"], [class*="new-chat-message__body"], [class*="message-text"]');
+                const t = (b ? b.innerText : el.innerText) || '';
+                if (t.trim() === text) n++;
               }
               return n;
             }
@@ -425,8 +1100,44 @@ class ZoomWeb:
     def _message_locator(self, text: str):
         """Locator верхнего (старейшего видимого) сообщения с точным текстом."""
         import re as _re
-        return (self.page.locator('[class*="new-chat-message"]')
-                .filter(has_text=_re.compile(rf"^{_re.escape(text)}$")))
+        # КОНТЕЙНЕР строки (в нём кнопка «...»), но совпадение — по ТЕКСТУ
+        # СООБЩЕНИЯ внутри (text-content), а не по всему контейнеру: у первого
+        # сообщения в группе автора контейнер несёт шапку «Имя Кому Все время»,
+        # и `^text$` по контейнеру не срабатывает (напр. «пидарас» не удалялся).
+        p = self.page
+        return p.locator('[class*="new-chat-message__container"]').filter(
+            has=p.locator('[class*="new-chat-message__text-content"]',
+                          has_text=_re.compile(rf"^{_re.escape(text)}$")))
+
+    def _open_message_menu(self, el, text: str) -> bool:
+        """Навести на строку и открыть меню «...». Ховер под Xvfb иногда не
+        поднимает кнопку с первого раза — «будим» (уводим мышь и наводим заново)
+        и повторяем до 3 раз. Кнопку ищем и как потомка строки, и по xpath."""
+        p = self.page
+        for attempt in range(3):
+            try:
+                el.scroll_into_view_if_needed(timeout=2000)
+                if attempt > 0:
+                    p.mouse.move(5, 5)             # сброс ховера
+                    p.wait_for_timeout(150)
+                el.hover(timeout=3000)             # НАСТОЯЩИЙ hover
+                p.wait_for_timeout(300)
+                dots = el.locator('button.new-chat-message__options-button')
+                if dots.count() == 0:
+                    dots = el.locator(
+                        'xpath=.//button[contains(@class,"options-button")]')
+                if dots.count() == 0:
+                    continue
+                dots.last.hover(timeout=1500)
+                dots.last.click(timeout=1800)
+                return True
+            except PWTimeout:
+                continue
+            except Exception as exc:  # noqa: BLE001
+                log.info("delete: ошибка ховера (%d): %s", attempt, exc)
+                continue
+        log.info("delete: «...» не поднялась для %r (3 попытки)", text)
+        return False
 
     def delete_message(self, mid: str, text: str) -> bool:
         """Удалить сообщение: РЕАЛЬНЫЙ Playwright-hover по строке (Zoom не
@@ -443,15 +1154,7 @@ class ZoomWeb:
             log.info("delete: сообщение %r не найдено в DOM", text)
             return False
         el = loc.first
-        try:
-            el.scroll_into_view_if_needed(timeout=2000)
-            el.hover(timeout=3000)                 # НАСТОЯЩИЙ hover
-            p.wait_for_timeout(250)
-            dots = el.locator('button.new-chat-message__options-button').last
-            dots.hover(timeout=2000)
-            dots.click(timeout=2000)
-        except PWTimeout:
-            log.info("delete: «...» не поднялась для %r", text)
+        if not self._open_message_menu(el, text):
             return False
         p.wait_for_timeout(700)                # меню-портал успевает отрисоваться
         if not self._click_menu_delete():

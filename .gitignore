@@ -22,3 +22,6 @@ screenshots/
 
 # временные скриншоты
 *.png
+
+# Cookie-сессия Zoom для входа бота — СЕКРЕТ, не коммитить
+zoom-cookies.json

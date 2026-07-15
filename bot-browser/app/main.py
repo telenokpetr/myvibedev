@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
+from app.account import account
 from app.config import config
 from app.moderation import ChatMessage, ProfanityFilter, SpamDetector, classify
 from app.moderator import moderator
@@ -44,6 +45,43 @@ def join(req: JoinRequest):
 def leave():
     moderator.leave()
     return moderator.state()
+
+
+# ---- вход в Zoom-аккаунт (управляется веб-панелью «Аккаунт бота») ----
+
+class SignInRequest(BaseModel):
+    email: str
+    password: str
+
+
+class OtpRequest(BaseModel):
+    code: str
+
+
+@app.get("/account/status")
+def account_status():
+    return account.status()
+
+
+@app.post("/account/sign-in")
+def account_sign_in(req: SignInRequest):
+    if not req.email or not req.password:
+        return JSONResponse({"error": "нужны email и пароль"}, status_code=400)
+    return account.sign_in(req.email.strip(), req.password)
+
+
+@app.post("/account/otp")
+def account_otp(req: OtpRequest):
+    if not req.code:
+        return JSONResponse({"error": "нужен код OTP"}, status_code=400)
+    return account.otp(req.code.strip())
+
+
+@app.post("/account/import-cookies")
+def account_import_cookies():
+    """Импорт готовой Zoom-сессии из /data/zoom-cookies.json (обход reCAPTCHA:
+    человек вошёл сам в своём браузере, бот берёт его cookie)."""
+    return account.import_cookies()
 
 
 @app.get("/session/status")
@@ -114,6 +152,61 @@ def recordings():
     from app.recorder import REC_DIR
     os.makedirs(REC_DIR, exist_ok=True)
     return {"dir": REC_DIR, "files": sorted(os.listdir(REC_DIR))}
+
+
+@app.post("/debug/dump_participants")
+def debug_dump_participants():
+    """DEBUG: дамп структуры панели участников в логи (для выверки селектора)."""
+    moderator.command("dump_participants")
+    return {"queued": True}
+
+
+class MuteRequest(BaseModel):
+    name: str
+
+
+@app.post("/debug/mute")
+def debug_mute(req: MuteRequest):
+    """DEBUG: замьютить участника по имени напрямую (тест мьюта без ожидания
+    мата от него)."""
+    moderator.command("mute", req.name)
+    return {"queued": True, "name": req.name}
+
+
+class EvalRequest(BaseModel):
+    js: str
+
+
+@app.post("/debug/eval")
+def debug_eval(req: EvalRequest):
+    """DEBUG: выполнить JS на живой странице бота, вернуть результат (DOM-разведка
+    без рестартов). js — тело arrow-функции, напр. '() => document.title'."""
+    return {"result": moderator.debug_eval(req.js)}
+
+
+class HoldRequest(BaseModel):
+    on: bool = True
+
+
+@app.post("/debug/hold")
+def debug_hold(req: HoldRequest):
+    """DEBUG: приостановить модерацию/переоткрытие чата, чтобы держать открытой
+    панель участников во время разведки (True/False)."""
+    moderator.debug_hold = req.on
+    return {"debug_hold": moderator.debug_hold}
+
+
+class PauseRequest(BaseModel):
+    seconds: float = 60.0
+
+
+@app.post("/debug/pause")
+def debug_pause(req: PauseRequest):
+    """DEBUG: пауза цикла модерации на N секунд (авто-снятие) — держать панель
+    участников открытой для разведки через /debug/eval."""
+    import time as _t
+    moderator._pause_until = _t.time() + max(0.0, req.seconds)
+    return {"pause_until": moderator._pause_until, "seconds": req.seconds}
 
 
 @app.get("/screenshot")
