@@ -64,6 +64,25 @@ async function loadAcc() {
   } catch (e) {
     renderAcc(null);
   }
+  showAuthExpired();
+}
+
+// Cookie-сессия Zoom живёт ~сутки. Когда она протухла, бот отказывается
+// заходить (раньше он тихо заходил анонимом и ловил бан «боты не могут
+// присоединяться» — со стороны выглядело как непонятная поломка).
+// Показываем это прямо в панели: лечится новым экспортом файла, не перезаходом.
+async function showAuthExpired() {
+  let s = null;
+  try {
+    s = await (await fetch("/api/bot/session/status")).json();
+  } catch (e) {
+    return;
+  }
+  if (!s || s.status !== "auth_expired") return;
+  AC.msg.textContent = "Сессия Zoom истекла: " + (s.auth_error || "cookie не авторизуют") +
+    ". Экспортируйте cookie заново (Cookie-Editor → Export JSON) в " +
+    "E:\\myvibedev\\zoom-cookies.json и нажмите «Импорт cookie».";
+  AC.msg.className = "msg err";
 }
 
 AC.signin.addEventListener("click", async () => {

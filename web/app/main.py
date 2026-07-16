@@ -118,6 +118,14 @@ def bot_mute_all(slot: int = 0):
 
 # ---- Вход в Zoom-аккаунт ----
 
+@app.get("/api/bot/session/status")
+def bot_session_status(slot: int = 0):
+    """Статус сессии бота. Важен status=auth_expired: cookie протухли, бот
+    НЕ пошёл в конференцию (иначе Zoom банит анонима)."""
+    w = _worker(slot)
+    return (w.status() if w else None) or UNAVAILABLE
+
+
 @app.get("/api/bot/account/status")
 def bot_account_status(slot: int = 0):
     w = _worker(slot)

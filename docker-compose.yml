@@ -126,6 +126,10 @@ services:
       - web
     volumes:
       - ./bot-browser:/app          # монтируем код (правки без пересборки образа)
+      # Cookie-сессия Zoom: файл монтируется НАПРЯМУЮ, чтобы после нового
+      # экспорта (Cookie-Editor → JSON) не нужен был docker cp — бот подхватит
+      # свежий файл при следующем входе сам.
+      - ./zoom-cookies.json:/data/zoom-cookies.json:ro
       - botshots:/data
       - browser-recordings:/data/recordings
     # без --reload: watchfiles на правку кода перезапускал процесс и ронял

@@ -12,6 +12,7 @@ Playwright sync API привязан к потоку-владельцу, поэ�
 в одном рабочем потоке (см. moderator.BrowserModerator).
 """
 
+import json
 import logging
 import os
 import re
@@ -299,6 +300,28 @@ class ZoomWeb:
             ck["sameSite"] = ss
             out.append(ck)
         return out
+
+    COOKIE_FILE = "/data/zoom-cookies.json"
+
+    def refresh_auth_from_file(self) -> tuple[bool, str]:
+        """Подхватить cookie из файла ПРИ КАЖДОМ входе и проверить авторизацию.
+
+        Раньше вход зависел от cookie, осевших в профиле: сессия Zoom живёт
+        около суток, и после протухания бот молча заходил АНОНИМОМ, где его
+        встречал бан «боты не могут присоединяться». Теперь берём свежий файл
+        (он смонтирован в контейнер) и, если он не авторизует, честно говорим
+        об этом вместо тихого анонимного захода.
+        """
+        if not os.path.exists(self.COOKIE_FILE):
+            return False, f"файла {self.COOKIE_FILE} нет — экспортируйте cookie"
+        try:
+            with open(self.COOKIE_FILE, encoding="utf-8-sig") as f:
+                raw = json.load(f)
+        except Exception as exc:  # noqa: BLE001
+            return False, f"файл cookie не читается: {str(exc)[:80]}"
+        if not isinstance(raw, list):
+            return False, "формат не тот: ожидается JSON-список (Cookie-Editor → Export)"
+        return self.import_cookies_and_verify(raw)
 
     def import_cookies_and_verify(self, raw: list) -> tuple[bool, str]:
         """Вставить cookie в контекст (сохранятся в профиль) и проверить, что

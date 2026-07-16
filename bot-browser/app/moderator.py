@@ -57,6 +57,7 @@ class BrowserModerator:
         self._commands: queue.Queue = queue.Queue()
         self._cmd_results: dict[str, bool] = {}
         self.recording = False
+        self.auth_error = ""                 # почему cookie не подошли
         self.video: str | None = None        # имя ролика, играющего в камеру
         # ---- live-debug (без рестартов): выполнять JS/держать панель ----
         self.debug_hold = False
@@ -82,8 +83,11 @@ class BrowserModerator:
         self.enabled = False
 
     def state(self) -> dict:
+        # status: idle|joining|waiting|live|finished|error|auth_expired.
+        # auth_expired = cookie протухли; лечится новым экспортом файла, а не
+        # перезаходом (раньше это выглядело как «бот зашёл, но его банят»).
         return {"status": self.status, "join_url": self._join_url,
-                "enabled": self.enabled}
+                "enabled": self.enabled, "auth_error": self.auth_error}
 
     def mod_status(self) -> dict:
         return {"enabled": self.enabled,
@@ -180,6 +184,16 @@ class BrowserModerator:
         self._web = web
         try:
             web.start()
+            # Cookie тянем из файла ПЕРЕД каждым заходом: сессия Zoom живёт
+            # ~сутки, и на протухшей бот раньше молча заходил анонимом и ловил
+            # бан «боты не могут присоединяться». Лучше честно не зайти.
+            ok, msg = web.refresh_auth_from_file()
+            self.auth_error = "" if ok else msg
+            if not ok:
+                self.status = "auth_expired"
+                log.warning("вход отменён: %s", msg)
+                return
+            log.info("cookie приняты: %s", msg or "авторизован")
             if not web.join(self._join_url):
                 self.status = "error"
                 log.warning("вход не подтверждён")
@@ -218,7 +232,9 @@ class BrowserModerator:
         finally:
             web.stop()
             self.enabled = False
-            if self.status not in ("error",):
+            # error/auth_expired — терминальные причины, их НЕ затираем на
+            # «finished» (иначе панель не покажет, что дело в протухших cookie).
+            if self.status not in ("error", "auth_expired"):
                 self.status = "finished"
 
     def _poll(self, web: ZoomWeb) -> None:
