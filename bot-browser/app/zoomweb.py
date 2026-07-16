@@ -25,6 +25,51 @@ log = logging.getLogger("zoomweb")
 # Chromium из Playwright — НЕТ). Пустая строка → бандловый Chromium.
 BROWSER_CHANNEL = os.environ.get("BROWSER_CHANNEL", "chrome")
 
+# Найти видимый элемент по тексту и вернуть центр его прямоугольника — чтобы
+# навести/кликнуть МЫШЬЮ. Берём самый глубокий подходящий узел: у внешних
+# контейнеров текст тот же, а координаты центра уезжают мимо пункта.
+_JS_FIND_TEXT = r"""
+(pattern) => {
+  const rx = new RegExp(pattern, 'i');
+  // Тот же запрос, что и в дампе меню (он пункт находит), + берём элемент с
+  // САМЫМ КОРОТКИМ текстом: у внешних контейнеров текст тот же, а центр их
+  // прямоугольника уезжает мимо пункта.
+  const all = [...document.querySelectorAll('*')]
+    .filter(e => rx.test((e.innerText || '')));
+  // Кандидаты: видимые и с НЕНУЛЕВЫМ прямоугольником (пустышки с тем же
+  // текстом ломали выбор), самый короткий текст = сам пункт, а не контейнер.
+  const hit = all
+    .map(e => ({ e: e, r: e.getBoundingClientRect(), t: (e.innerText || '').trim() }))
+    .filter(o => o.r.width > 0 && o.r.height > 0 && o.e.offsetParent)
+    .sort((a, b) => a.t.length - b.t.length);
+  if (!hit.length) {
+    return { none: true, matchedAnyway: all.length,
+             sample: all.slice(0, 3).map(e => e.tagName + ':' +
+               (e.innerText || '').trim().slice(0, 30) + ':' +
+               JSON.stringify(e.getBoundingClientRect().toJSON())) };
+  }
+  const o = hit[0];
+  return { x: o.r.x + o.r.width / 2, y: o.r.y + o.r.height / 2,
+           tag: o.e.tagName, txt: o.t.slice(0, 40) };
+}
+"""
+
+# Стоит ли галочка на пункте-режиме: Zoom рисует её либо aria-checked, либо
+# символом ✓ в строке пункта.
+_JS_CHECKED = r"""
+(pattern) => {
+  const rx = new RegExp(pattern, 'i');
+  const row = [...document.querySelectorAll('[role=menuitem], [role=menuitemcheckbox], li, button, div')]
+    .filter(e => e.offsetParent && rx.test((e.innerText || '')))
+    .sort((a, b) => (a.innerText || '').length - (b.innerText || '').length)[0];
+  if (!row) return null;
+  const aria = row.getAttribute('aria-checked');
+  if (aria !== null) return aria === 'true';
+  return /[✓✔]/.test(row.innerText || '') ||
+         !!row.querySelector('[class*=check], [class*=selected], svg');
+}
+"""
+
 
 def to_web_client(url: str) -> str:
     """Любую Zoom-ссылку привести к web-клиенту app.zoom.us/wc/join/<id>.
@@ -1020,6 +1065,18 @@ class ZoomWeb:
         p.wait_for_timeout(1200)
         return {"clicked": True, "seen": self.debug_dump() if dump else None}
 
+    def debug_hover(self, selector: str, dump: bool = True):
+        """DEBUG: НАСТОЯЩЕЕ наведение мыши + дамп появившегося.
+        Подменю Zoom («Подавление фонового шума» → уровни) раскрывается по
+        hover, а не по клику — кликом его не достать."""
+        p = self.page
+        try:
+            p.locator(selector).first.hover(timeout=4000, force=True)
+        except Exception as exc:  # noqa: BLE001
+            return {"hovered": False, "error": str(exc)[:120]}
+        p.wait_for_timeout(1000)
+        return {"hovered": True, "seen": self.debug_dump() if dump else None}
+
     def debug_dump(self):
         """DEBUG: всё видимое кликабельное на экране (текст + роль + aria)."""
         return self.page.evaluate(
@@ -1046,29 +1103,89 @@ class ZoomWeb:
         мыши (_reveal_toolbar), и клик по пункту уходит в пустоту.
         """
         p = self.page
+        rx_ns = "подавление фонового шума|background noise"
+        # Кнопка «More audio controls» — ПЕРЕКЛЮЧАТЕЛЬ: если меню осталось
+        # открытым от прошлой попытки, клик его ЗАКРОЕТ (ловились пустые дампы,
+        # matchedAnyway=0). Поэтому сначала гасим меню, потом открываем; если с
+        # первого раза не открылось — жмём ещё раз.
+        p.keyboard.press("Escape")
+        p.wait_for_timeout(300)
+        box = None
+        for attempt in (1, 2):
+            self._reveal_toolbar()
+            try:
+                p.locator('button[aria-label="More audio controls"]').first.click(timeout=4000)
+            except Exception as exc:  # noqa: BLE001
+                return {"ok": False, "error": f"меню звука не открылось: {str(exc)[:80]}"}
+            p.wait_for_timeout(1000)
+            box = p.evaluate(_JS_FIND_TEXT, rx_ns)
+            if box and not box.get("none"):
+                break
+            log.info("шумоподавление: меню пустое (попытка %d) — пробую ещё", attempt)
+        # «Подавление фонового шума» — это РЕЖИМ-ГАЛОЧКА в разделе «Microphone
+        # modes», а не подменю с уровнями: включён — стоит ✓, надо просто снять.
+        # Кликаем МЫШЬЮ по координатам: локаторы Playwright этот пункт не берут
+        # (text=/get_by_text таймаутятся, хотя JS его видит). Всё в ОДНОМ вызове —
+        # цикл модерации каждую секунду трогает страницу и меню закрывается.
+        if not box or box.get("none"):
+            p.keyboard.press("Escape")
+            return {"ok": False, "error": "пункт шумоподавления не виден в меню",
+                    "debug": box}
+        p.mouse.click(box["x"], box["y"])
+        p.wait_for_timeout(700)
+        # Проверяем: снова открываем меню и смотрим, ушла ли галочка.
         self._reveal_toolbar()
         try:
             p.locator('button[aria-label="More audio controls"]').first.click(timeout=4000)
             p.wait_for_timeout(900)
-        except Exception as exc:  # noqa: BLE001
-            return {"ok": False, "error": f"меню звука не открылось: {str(exc)[:80]}"}
-        try:
-            p.get_by_text(re.compile(r"подавление фонового шума|background noise",
-                                     re.I)).first.click(timeout=3000)
-            p.wait_for_timeout(900)
-        except Exception as exc:  # noqa: BLE001
-            p.keyboard.press("Escape")
-            return {"ok": False, "error": f"пункт шумоподавления не найден: {str(exc)[:80]}"}
-        for rx in (level, r"отключить", r"disable", r"off"):
-            try:
-                p.get_by_text(re.compile(rx, re.I)).first.click(timeout=2500)
-                log.info("шумоподавление: выбран «%s»", rx)
-                return {"ok": True, "level": rx}
-            except Exception:  # noqa: BLE001
-                continue
-        seen = self.debug_dump()
+        except Exception:  # noqa: BLE001
+            return {"ok": True, "note": "кликнул, но проверить состояние не смог"}
+        still_on = p.evaluate(_JS_CHECKED, "подавление фонового шума|background noise")
         p.keyboard.press("Escape")
-        return {"ok": False, "error": "уровень не найден", "menu": seen}
+        log.info("шумоподавление после клика: %s", "ВСЁ ЕЩЁ ВКЛ" if still_on else "снято")
+        return {"ok": not still_on, "checked_after": still_on, "item": box}
+
+    def open_audio_settings(self) -> dict:
+        """Открыть Настройки → Звук и показать «Звуковой профиль».
+
+        Настоящее место настройки шумодава — не меню тулбара, а этот диалог:
+        «Звуковой профиль» = радиокнопки (удаление шума в Zoom / встроенное в
+        браузер / оригинальный звук). Для музыки нужен оригинальный звук.
+        Клик — мышью по координатам: локаторы Playwright по этим пунктам
+        таймаутятся, хотя JS их видит.
+        """
+        p = self.page
+        p.keyboard.press("Escape")
+        p.wait_for_timeout(300)
+        box = None
+        for _ in (1, 2):
+            self._reveal_toolbar()
+            try:
+                p.locator('button[aria-label="More audio controls"]').first.click(timeout=4000)
+            except Exception as exc:  # noqa: BLE001
+                return {"ok": False, "error": f"меню звука не открылось: {str(exc)[:80]}"}
+            p.wait_for_timeout(1000)
+            box = p.evaluate(_JS_FIND_TEXT, "^настройки звука$|^audio settings$")
+            if box and not box.get("none"):
+                break
+        if not box or box.get("none"):
+            p.keyboard.press("Escape")
+            return {"ok": False, "error": "«Настройки звука» не найдены", "debug": box}
+        p.mouse.click(box["x"], box["y"])
+        p.wait_for_timeout(1800)          # диалог рисуется не мгновенно
+        return {"ok": True, "seen": self.debug_dump()}
+
+    def set_audio_profile(self, profile: str = "оригинальн|original|live performance") -> dict:
+        """Выбрать звуковой профиль в открытом диалоге настроек (радиокнопка)."""
+        p = self.page
+        box = p.evaluate(_JS_FIND_TEXT, profile)
+        if not box or box.get("none"):
+            return {"ok": False, "error": "профиль не найден в диалоге",
+                    "debug": box, "seen": self.debug_dump()}
+        p.mouse.click(box["x"], box["y"])
+        p.wait_for_timeout(700)
+        log.info("звуковой профиль: выбран %s", box.get("txt"))
+        return {"ok": True, "clicked": box}
 
     # ---- виртуальная камера (живой поток с canvas, см. vcam.py) ----
 
