@@ -156,7 +156,13 @@ def recordings():
     return {"dir": REC_DIR, "files": sorted(os.listdir(REC_DIR))}
 
 
-# ---- Видео в камеру бота (живой поток, см. vcam.py) ----
+# ---- Медиа бота: видео в камеру, музыка в микрофон (живой поток, см. vcam.py) ----
+
+# Тип отдаём точный: с неверным Content-Type <video> отказывается играть файл.
+_CTYPES = {".webm": "video/webm", ".mp4": "video/mp4", ".mp3": "audio/mpeg",
+           ".ogg": "audio/ogg", ".opus": "audio/ogg", ".wav": "audio/wav",
+           ".flac": "audio/flac", ".m4a": "audio/mp4", ".aac": "audio/aac"}
+
 
 class VideoPlayRequest(BaseModel):
     name: str
@@ -181,7 +187,8 @@ async def video_upload(request: Request, name: str):
     """
     name = vcam.safe_name(name)
     if not name.lower().endswith(vcam.ALLOWED_EXT):
-        return JSONResponse({"error": "только .mp4 или .webm"}, status_code=400)
+        return JSONResponse({"error": "видео .mp4/.webm или музыка .mp3/.ogg/.wav/.flac"},
+                            status_code=400)
     vcam.ensure_dir()
     path = vcam.path_of(name)
     size = 0
@@ -242,7 +249,7 @@ def video_file(name: str, request: Request):
     if not os.path.exists(path):
         return JSONResponse({"error": "нет такого ролика"}, status_code=404)
     total = os.path.getsize(path)
-    ctype = "video/webm" if path.lower().endswith(".webm") else "video/mp4"
+    ctype = _CTYPES.get(os.path.splitext(path)[1].lower(), "application/octet-stream")
     headers = {"Access-Control-Allow-Origin": "*", "Accept-Ranges": "bytes",
                "Cache-Control": "no-store",
                # Chrome спрашивает разрешение на выход в локальную сеть

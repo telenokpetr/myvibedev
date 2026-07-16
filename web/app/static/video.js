@@ -1,4 +1,5 @@
-// Панель видео: ролик транслируется в КАМЕРУ бота (живой поток с canvas —
+// Панель медиа: видео идёт в КАМЕРУ бота, музыка — только в МИКРОФОН (на
+// камере остаётся заставка). Живой поток с canvas —
 // см. bot-browser/app/vcam.py). Загрузка .mp4/.webm до 100 МБ, играть/пауза/стоп,
 // громкость звука ролика. Без ролика камера показывает заставку.
 
@@ -29,7 +30,7 @@ function renderVideo(list, status) {
   if (!list || list.error) {
     VD.state.textContent = "недоступно";
     VD.state.className = "pill";
-    VD.list.innerHTML = '<tr><td colspan="3" class="muted">бот недоступен</td></tr>';
+    VD.list.innerHTML = '<tr><td colspan="4" class="muted">бот недоступен</td></tr>';
     return;
   }
   const inMeeting = status && status.in_meeting;
@@ -58,17 +59,26 @@ function renderVideo(list, status) {
 
   const items = list.videos || [];
   if (!items.length) {
-    VD.list.innerHTML = '<tr><td colspan="3" class="muted">нет роликов — загрузите mp4</td></tr>';
+    VD.list.innerHTML =
+      '<tr><td colspan="4" class="muted">пусто — загрузите видео или музыку</td></tr>';
     return;
   }
   VD.list.innerHTML = items.map((v) => {
     const now = videoPlaying === v.name ? "▶ " : "";
+    const audio = v.kind === "audio";
+    const where = audio ? "🎵 микрофон" : "🎬 камера";
+    // Пока идёт перегон, играть нечего — кнопку прячем.
+    const busy = v.converting;
+    const play = busy
+      ? '<span class="muted">перегон…</span>'
+      : `<button data-play="${encodeURIComponent(v.name)}" ${inMeeting ? "" : "disabled"}
+                 title="${audio ? "Пустить в микрофон" : "Пустить в камеру"}">▶</button>`;
     return `<tr>
       <td>${now}${esc(v.name)}</td>
+      <td class="muted">${where}</td>
       <td class="muted">${fmtSize(v.size)}</td>
       <td style="text-align:right">
-        <button data-play="${encodeURIComponent(v.name)}" ${inMeeting ? "" : "disabled"}
-                title="Пустить в камеру">▶</button>
+        ${play}
         <button class="del" data-del="${encodeURIComponent(v.name)}" title="Удалить">✕</button>
       </td>
     </tr>`;
@@ -115,7 +125,7 @@ VD.vol.addEventListener("input", () => {
 VD.uploadBtn.addEventListener("click", async () => {
   const f = VD.file.files[0];
   if (!f) {
-    VD.uploadMsg.textContent = "выберите видео";
+    VD.uploadMsg.textContent = "выберите файл";
     VD.uploadMsg.className = "msg err";
     return;
   }

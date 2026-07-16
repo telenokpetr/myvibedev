@@ -223,8 +223,11 @@ def bot_video_status(slot: int = 0):
 @app.post("/api/bot/video/upload")
 async def bot_video_upload(file: UploadFile = File(...), slot: int = 0):
     name = _fix_filename(file.filename or "")
-    if not name.lower().endswith((".mp4", ".webm")):
-        return JSONResponse({"error": "только .mp4 или .webm"}, status_code=400)
+    # Видео идёт в камеру (с картинкой), музыка — только в микрофон.
+    if not name.lower().endswith((".mp4", ".webm", ".mp3", ".ogg", ".opus",
+                                  ".wav", ".flac", ".m4a", ".aac")):
+        return JSONResponse({"error": "видео .mp4/.webm или музыка .mp3/.ogg/.wav/.flac"},
+                            status_code=400)
     data = await file.read()
     if len(data) > VIDEO_MAX:
         return JSONResponse({"error": "файл больше 100 МБ"}, status_code=413)

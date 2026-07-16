@@ -27,8 +27,16 @@ import threading
 log = logging.getLogger("vcam")
 
 VIDEO_DIR = os.environ.get("VIDEO_DIR", "/data/video")
-MAX_UPLOAD = 100 * 1024 * 1024   # 100 МБ на ролик (требование)
-ALLOWED_EXT = (".mp4", ".webm")
+MAX_UPLOAD = 100 * 1024 * 1024   # 100 МБ на файл (требование)
+
+# Видео идёт В КАМЕРУ (картинка + звук), музыка — ТОЛЬКО В МИКРОФОН: на камере
+# при этом остаётся заставка. Отдельного плеера для музыки не нужно — тот же
+# скрытый <video> играет и mp3, а draw() при videoWidth==0 сам рисует заставку.
+VIDEO_EXT = (".mp4", ".webm")
+# Chromium (проверено на живой странице бота): mp3/ogg/opus/flac — «probably»,
+# wav — «maybe», а m4a/AAC не умеет вовсе → его перегоняем.
+AUDIO_EXT = (".mp3", ".ogg", ".opus", ".wav", ".flac", ".m4a", ".aac")
+ALLOWED_EXT = VIDEO_EXT + AUDIO_EXT
 # Порт своего же API — страница ходит к нему за файлом ролика.
 SELF_ORIGIN = os.environ.get("SELF_ORIGIN", "http://127.0.0.1:9100")
 
@@ -58,10 +66,11 @@ def list_videos() -> list[dict]:
         p = os.path.join(VIDEO_DIR, n)
         if not os.path.isfile(p) or n.endswith(".part"):
             continue
-        item = {"name": n, "size": os.path.getsize(p)}
+        item = {"name": n, "size": os.path.getsize(p),
+                "kind": "audio" if is_audio(n) else "video"}
         if n in _converting:
             item["converting"] = True
-        item["playable"] = n.lower().endswith(".webm") or n not in _converting
+        item["playable"] = n not in _converting
         out.append(item)
     return out
 
@@ -75,32 +84,49 @@ def list_videos() -> list[dict]:
 _converting: set[str] = set()
 
 
+def is_audio(name: str) -> bool:
+    return name.lower().endswith(AUDIO_EXT)
+
+
 def needs_convert(name: str) -> bool:
-    return not name.lower().endswith(".webm")
+    """mp4 — из-за отсутствия H.264 в Chromium; m4a/aac — из-за отсутствия AAC.
+    Остальное (webm, mp3, ogg, wav, flac) браузер играет как есть."""
+    low = name.lower()
+    if low.endswith(".webm"):
+        return False
+    if is_audio(name):
+        return low.endswith((".m4a", ".aac"))
+    return True
 
 
 def webm_name(name: str) -> str:
-    return os.path.splitext(name)[0] + ".webm"
+    """Имя после перегона: видео → .webm, музыка → .ogg (opus)."""
+    base = os.path.splitext(name)[0]
+    return base + (".ogg" if is_audio(name) else ".webm")
 
 
 def convert_to_webm(src_name: str) -> None:
-    """Перегнать ролик в WebM (VP8/Opus) рядом с исходником, в фоне.
+    """Перегнать файл в то, что Chromium играет, рядом с исходником, в фоне.
 
-    VP8, а не VP9: жмёт заметно быстрее, а качества для трансляции в камеру
-    хватает. Исходник удаляем — иначе в списке два одинаковых ролика, из
-    которых играет только один.
+    Видео → WebM (VP8/Opus): VP8, а не VP9, — жмёт заметно быстрее, качества для
+    камеры хватает. Музыка → Ogg/Opus (только звук, без пустой видеодорожки).
+    Исходник удаляем — иначе в списке два одинаковых файла, из которых играет
+    только один.
     """
     src = path_of(src_name)
     dst = path_of(webm_name(src_name))
     tmp = dst + ".part"
     _converting.add(webm_name(src_name))
     try:
-        log.info("перегон в WebM: %s → %s", src_name, os.path.basename(dst))
-        subprocess.run(
-            ["ffmpeg", "-y", "-i", src, "-c:v", "libvpx", "-b:v", "1500k",
-             "-deadline", "realtime", "-cpu-used", "4",
-             "-c:a", "libopus", "-b:a", "96k", "-f", "webm", tmp],
-            check=True, capture_output=True, timeout=3600)
+        log.info("перегон: %s → %s", src_name, os.path.basename(dst))
+        if is_audio(src_name):
+            cmd = ["ffmpeg", "-y", "-i", src, "-vn",
+                   "-c:a", "libopus", "-b:a", "128k", "-f", "ogg", tmp]
+        else:
+            cmd = ["ffmpeg", "-y", "-i", src, "-c:v", "libvpx", "-b:v", "1500k",
+                   "-deadline", "realtime", "-cpu-used", "4",
+                   "-c:a", "libopus", "-b:a", "96k", "-f", "webm", tmp]
+        subprocess.run(cmd, check=True, capture_output=True, timeout=3600)
         os.replace(tmp, dst)
         if os.path.exists(src) and src != dst:
             os.remove(src)
