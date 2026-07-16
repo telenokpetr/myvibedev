@@ -191,6 +191,86 @@ def bot_music_action(action: str, slot: int = 0):
     return (w.music_action(action) if w else None) or UNAVAILABLE
 
 
+# ---- Видео в камеру бота ----
+VIDEO_MAX = 100 * 1024 * 1024  # 100 МБ
+
+
+def _fix_filename(name: str) -> str:
+    """Починить имя файла из multipart.
+
+    Браузер шлёт имя в UTF-8, а стандарт multipart предписывает latin-1 —
+    starlette так и декодирует, и «Иордан» приезжает как «Èîðäàí». Гоняем
+    байты обратно; если не сходится (имя и было latin-1) — оставляем как есть.
+    """
+    try:
+        return name.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return name
+
+
+@app.get("/api/bot/video/list")
+def bot_video_list(slot: int = 0):
+    w = _worker(slot)
+    return (w.video_list() if w else None) or UNAVAILABLE
+
+
+@app.get("/api/bot/video/status")
+def bot_video_status(slot: int = 0):
+    w = _worker(slot)
+    return (w.video_status() if w else None) or UNAVAILABLE
+
+
+@app.post("/api/bot/video/upload")
+async def bot_video_upload(file: UploadFile = File(...), slot: int = 0):
+    name = _fix_filename(file.filename or "")
+    if not name.lower().endswith((".mp4", ".webm")):
+        return JSONResponse({"error": "только .mp4 или .webm"}, status_code=400)
+    data = await file.read()
+    if len(data) > VIDEO_MAX:
+        return JSONResponse({"error": "файл больше 100 МБ"}, status_code=413)
+    w = _worker(slot)
+    if not w:
+        return JSONResponse(UNAVAILABLE, status_code=502)
+    j, code = w.video_upload(name, data)
+    return JSONResponse(j or UNAVAILABLE, status_code=code)
+
+
+@app.post("/api/bot/video/play")
+def bot_video_play(payload: dict = Body(...), slot: int = 0):
+    name = (payload.get("name") or "").strip()
+    if not name:
+        return JSONResponse({"error": "нужно имя ролика"}, status_code=400)
+    w = _worker(slot)
+    if not w:
+        return JSONResponse(UNAVAILABLE, status_code=502)
+    j, code = w.video_play(name)
+    return JSONResponse(j or UNAVAILABLE, status_code=code)
+
+
+@app.post("/api/bot/video/volume")
+def bot_video_volume(payload: dict = Body(...), slot: int = 0):
+    try:
+        vol = int(payload.get("volume", 100))
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "volume должен быть числом"}, status_code=400)
+    w = _worker(slot)
+    return (w.video_volume(vol) if w else None) or UNAVAILABLE
+
+
+@app.delete("/api/bot/video/tracks/{name}")
+def bot_video_delete(name: str, slot: int = 0):
+    w = _worker(slot)
+    return (w.video_delete(name) if w else None) or UNAVAILABLE
+
+
+@app.post("/api/bot/video/{action}")
+def bot_video_action(action: str, slot: int = 0):
+    if action not in ("stop", "pause", "resume"):
+        return JSONResponse({"error": "неизвестное действие"}, status_code=400)
+    w = _worker(slot)
+    return (w.video_action(action) if w else None) or UNAVAILABLE
+
+
 @app.post("/api/bot/moderation/test")
 def bot_moderation_test(payload: dict = Body(...), slot: int = 0):
     sender = payload.get("sender") or "Тест"

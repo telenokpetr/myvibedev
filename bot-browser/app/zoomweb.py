@@ -13,6 +13,7 @@ Playwright sync API привязан к потоку-владельцу, поэ�
 """
 
 import logging
+import os
 import re
 import time
 
@@ -20,15 +21,24 @@ from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
 log = logging.getLogger("zoomweb")
 
+# Какой браузер запускать: "chrome" — настоящий Google Chrome (умеет mp4/H.264,
+# Chromium из Playwright — НЕТ). Пустая строка → бандловый Chromium.
+BROWSER_CHANNEL = os.environ.get("BROWSER_CHANNEL", "chrome")
+
 
 def to_web_client(url: str) -> str:
     """Любую Zoom-ссылку привести к web-клиенту app.zoom.us/wc/join/<id>.
 
     Desktop-ссылка вида us06web.zoom.us/j/<id>?pwd=… в браузере ведёт на
     landing «запустить Zoom», поэтому строим прямой web-URL (проверено
-    разведкой 13.07)."""
+    разведкой 13.07).
+
+    Host-ссылка /wc/<id>/start?…&fromPWA=1 (её даёт кнопка «Начать» в веб-Zoom)
+    открывает клиент в IFRAME-обёртке PWA: в верхнем документе кнопок нет,
+    бот молча висел на prejoin. Приводим и её к чистому /wc/join/<id> —
+    обёртки нет, весь остальной код (чат/мьют/тулбар) работает как обычно."""
     m = (re.search(r"/j/(\d+)", url) or re.search(r"/wc/join/(\d+)", url)
-         or re.search(r"/wc/(\d+)/join", url))
+         or re.search(r"/wc/(\d+)/join", url) or re.search(r"/wc/(\d+)/start", url))
     if not m:
         return url
     mid = m.group(1)
@@ -97,15 +107,21 @@ class ZoomWeb:
           "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
 
     def start(self) -> None:
-        from app import media
-        media.ensure_assets()
+        from app import vcam
+        vcam.ensure_dir()
         self._pw = sync_playwright().start()
         # persistent_context = постоянный профиль (нет отдельного browser-объекта).
-        self._ctx = self._pw.chromium.launch_persistent_context(
-            self.PROFILE_DIR,
+        #
+        # channel="chrome" — НАСТОЯЩИЙ Google Chrome вместо Chromium из Playwright.
+        # Chromium собран без проприетарных кодеков: mp4 (H.264/AAC) в нём не
+        # играет вообще — <video> падает с «no supported source was found», и в
+        # камеру проходил только WebM. Chrome их умеет, mp4 идёт как есть.
+        # Если Chrome в образе нет (не пересобрали) — откат на Chromium, чтобы
+        # бот не остался лежать: WebM работает и там.
+        opts = dict(
             headless=False,
             args=[
-                *media.launch_args(),   # виртуальные камера + микрофон из файлов
+                *vcam.launch_args(),    # живая виртуальная камера/микрофон (canvas)
                 "--disable-blink-features=AutomationControlled",
                 "--no-sandbox",
             ],
@@ -114,6 +130,15 @@ class ZoomWeb:
             locale="ru-RU",
             user_agent=self.UA,
         )
+        try:
+            self._ctx = self._pw.chromium.launch_persistent_context(
+                self.PROFILE_DIR, channel=BROWSER_CHANNEL, **opts)
+            log.info("браузер: %s (mp4/H.264 играет)", BROWSER_CHANNEL)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("%s не запустился (%s) — откат на Chromium (только WebM)",
+                        BROWSER_CHANNEL, str(exc)[:120])
+            self._ctx = self._pw.chromium.launch_persistent_context(
+                self.PROFILE_DIR, **opts)
         # Прячем признаки автоматизации (navigator.webdriver и пр.) — до загрузки
         # любой страницы, чтобы reCAPTCHA/антибот Zoom видел «человеческий» браузер.
         self._ctx.add_init_script(
@@ -123,6 +148,9 @@ class ZoomWeb:
             "{get:()=>['ru-RU','ru','en-US','en']});"
             "Object.defineProperty(navigator,'plugins',{get:()=>[1,2,3,4,5]});"
         )
+        # Виртуальная камера: перехват getUserMedia ставим ДО загрузки страницы,
+        # иначе Zoom успеет взять настоящий поток (файл-заглушку).
+        self._ctx.add_init_script(vcam.init_script(self._name))
         self._browser = None
         self.page = self._ctx.pages[0] if self._ctx.pages else self._ctx.new_page()
         # Перехват JS-ошибок страницы — чтобы понять, не из-за скрипта ли не
@@ -587,7 +615,12 @@ class ZoomWeb:
         except Exception:  # noqa: BLE001
             return False
         keys = ("let you in", "waiting for the host", "разрешит вам войти",
-                "ожидание организатора", "зал ожидания", "скоро начнёт")
+                "ожидание организатора", "зал ожидания", "скоро начнёт",
+                # Новый экран зала: «Организатор присоединился. Мы сообщили им,
+                # что вы здесь.» Его не ловили — бот рапортовал live и искал
+                # чат в пустоте («кнопка чата не найдена»).
+                "мы сообщили им, что вы здесь", "we've let them know you're here",
+                "организатор присоединился")
         return any(k in body for k in keys)
 
     def complete_join(self) -> bool:
@@ -613,22 +646,44 @@ class ZoomWeb:
 
     def _enable_media_in_meeting(self) -> None:
         self.ensure_video_on()
+        # Сразу снимаем шумодав: иначе звук ролика/музыки Zoom режет как «шум»
+        # и слышно только речь.
+        try:
+            res = self.enable_original_sound()
+            log.info("шумоподавление при входе: %s", res)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("шумоподавление при входе не вышло: %s", str(exc)[:100])
 
     def ensure_video_on(self) -> None:
         """Включить камеру, если выключена. Кнопка тумблера в тулбаре: когда
         камера ВЫКЛ, её aria-label начинается со «start»/«начать» — по этому и
-        отличаем (кликать всегда нельзя — тумблер выключит включённую)."""
+        отличаем (кликать всегда нельзя — тумблер выключит включённую).
+
+        Playwright-клик по этой кнопке молча не срабатывал (тулбар всплывает и
+        уезжает, элемент «двигается» → клик уходит в никуда, а исключение мы
+        глотали). JS-клик по ней Zoom принимает нормально — он и остаётся
+        фолбэком, иначе бот сидит с выключенной камерой и в неё ничего не идёт.
+        """
+        sel = ('button[aria-label*="start my video" i], '
+               'button[aria-label*="start video" i], '
+               'button[aria-label*="начать видео" i], '
+               'button[aria-label*="включить видео" i]')
         try:
-            off = self.page.locator(
-                'button[aria-label*="start my video" i], '
-                'button[aria-label*="start video" i], '
-                'button[aria-label*="начать видео" i], '
-                'button[aria-label*="включить видео" i]')
-            if off.count() > 0 and off.first.is_visible():
+            off = self.page.locator(sel)
+            if off.count() == 0:
+                return                      # камера уже включена («stop my video»)
+            try:
                 off.first.click(timeout=2000)
+            except Exception:               # noqa: BLE001
+                self.page.evaluate(
+                    "(s) => { const b = document.querySelector(s);"
+                    " if (b) b.click(); }", sel)
+            if self.page.locator(sel).count() == 0:
                 log.info("камера включена в митинге")
-        except Exception:  # noqa: BLE001
-            pass
+            else:
+                log.warning("камера: кнопку нажали, но тумблер остался в «выкл»")
+        except Exception as exc:  # noqa: BLE001
+            log.warning("камера: не удалось включить: %s", str(exc)[:100])
 
     def _open_chat(self) -> bool:
         # Панель чата в web рендерит сообщения только когда открыта. Кнопка —
@@ -927,6 +982,122 @@ class ZoomWeb:
         """DEBUG: выполнить произвольный JS на странице бота и вернуть результат.
         js — тело функции-стрелки, напр. '() => document.title'."""
         return self.page.evaluate(js)
+
+    def debug_audio_menu(self) -> list:
+        """DEBUG: открыть меню звука НАСТОЯЩИМ кликом и вернуть его пункты.
+
+        Синтетический click() Zoom для меню игнорирует (как и в случае «...» у
+        сообщений) — открываем через Playwright. Нужно, чтобы найти пункт
+        «оригинальный звук»: иначе Zoom считает наш поток микрофоном и режет
+        всё, кроме голоса (музыка/фонограмма из ролика пропадают)."""
+        p = self.page
+        self._reveal_toolbar()
+        try:
+            p.locator('button[aria-label="More audio controls"]').first.click(timeout=4000)
+        except Exception as exc:  # noqa: BLE001
+            return [{"error": f"меню звука не открылось: {str(exc)[:80]}"}]
+        p.wait_for_timeout(1200)
+        return p.evaluate(
+            "() => [...document.querySelectorAll('[role=menuitem], [role=menuitemcheckbox],"
+            " li, a, button')].filter(e => e.offsetParent && (e.innerText || '').trim())"
+            ".map(e => ({t: (e.innerText || '').trim().slice(0, 45),"
+            " role: e.getAttribute('role') || e.tagName,"
+            " checked: e.getAttribute('aria-checked')})).slice(0, 40)")
+
+    def debug_click(self, selector: str, dump: bool = True, reveal: bool = True):
+        """DEBUG: НАСТОЯЩИЙ клик по селектору + дамп того, что появилось.
+        Синтетический click() Zoom для меню игнорирует — нужен Playwright.
+
+        reveal=False — когда меню уже открыто: движение мыши (reveal) его
+        закрывает, и следующий клик уходит в пустоту."""
+        p = self.page
+        if reveal:
+            self._reveal_toolbar()
+        try:
+            p.locator(selector).first.click(timeout=4000)
+        except Exception as exc:  # noqa: BLE001
+            return {"clicked": False, "error": str(exc)[:120]}
+        p.wait_for_timeout(1200)
+        return {"clicked": True, "seen": self.debug_dump() if dump else None}
+
+    def debug_dump(self):
+        """DEBUG: всё видимое кликабельное на экране (текст + роль + aria)."""
+        return self.page.evaluate(
+            "() => [...document.querySelectorAll('[role=menuitem],"
+            " [role=menuitemcheckbox], [role=option], [role=tab], li, a, button,"
+            " [class*=dropdown] *, [class*=menu] *')]"
+            ".filter(e => e.offsetParent && (e.innerText || '').trim().length < 60"
+            " && (e.innerText || '').trim())"
+            ".map(e => ((e.innerText || '').trim().slice(0, 45) + ' |'"
+            " + (e.getAttribute('role') || e.tagName) + '|'"
+            " + (e.getAttribute('aria-label') || '').slice(0, 30)))"
+            ".filter((v, i, a) => a.indexOf(v) === i).slice(0, 60)")
+
+    def enable_original_sound(self, level: str = "Отключить") -> dict:
+        """Отключить подавление фонового шума у бота.
+
+        Zoom считает наш поток микрофоном и по умолчанию давит всё, кроме речи:
+        музыка и фонограмма ролика доходят рваными или пропадают совсем
+        (проверено вживую — «слышно только голос»). «Оригинального звука» в
+        веб-клиенте НЕТ; его роль играет меню «Подавление фонового шума» с
+        уровнями Авто/Низкий/Средний/Высокий/Отключить.
+
+        Всё делается ОДНИМ вызовом: между вызовами меню закрывается от движения
+        мыши (_reveal_toolbar), и клик по пункту уходит в пустоту.
+        """
+        p = self.page
+        self._reveal_toolbar()
+        try:
+            p.locator('button[aria-label="More audio controls"]').first.click(timeout=4000)
+            p.wait_for_timeout(900)
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": f"меню звука не открылось: {str(exc)[:80]}"}
+        try:
+            p.get_by_text(re.compile(r"подавление фонового шума|background noise",
+                                     re.I)).first.click(timeout=3000)
+            p.wait_for_timeout(900)
+        except Exception as exc:  # noqa: BLE001
+            p.keyboard.press("Escape")
+            return {"ok": False, "error": f"пункт шумоподавления не найден: {str(exc)[:80]}"}
+        for rx in (level, r"отключить", r"disable", r"off"):
+            try:
+                p.get_by_text(re.compile(rx, re.I)).first.click(timeout=2500)
+                log.info("шумоподавление: выбран «%s»", rx)
+                return {"ok": True, "level": rx}
+            except Exception:  # noqa: BLE001
+                continue
+        seen = self.debug_dump()
+        p.keyboard.press("Escape")
+        return {"ok": False, "error": "уровень не найден", "menu": seen}
+
+    # ---- виртуальная камера (живой поток с canvas, см. vcam.py) ----
+
+    def vcam_play(self, name: str):
+        """Пустить ролик в камеру бота. Трек не пересоздаётся — Zoom смены не
+        замечает, картинка просто меняется."""
+        from app import vcam
+        url = vcam.file_url(name)
+        # Тулбар Zoom прячется при простое (в Xvfb мышь не двигается) — иначе
+        # кнопка камеры невидима и клик не проходит.
+        self._reveal_toolbar()
+        self.ensure_video_on()   # без включённой камеры поток никуда не пойдёт
+        return self.page.evaluate(
+            "(u) => window.__vcam ? window.__vcam.play(u) : 'vcam не установлен'", url)
+
+    def vcam_stop(self):
+        from app import vcam  # noqa: F401  (симметрия с vcam_play)
+        return self.page.evaluate(
+            "() => window.__vcam ? window.__vcam.stop() : false")
+
+    def vcam_command(self, action: str, value: float | None = None):
+        return self.page.evaluate(
+            "([a, v]) => { if (!window.__vcam) return false;"
+            " return a === 'volume' ? window.__vcam.volume(v) : window.__vcam[a](); }",
+            [action, value])
+
+    def vcam_state(self):
+        return self.page.evaluate(
+            "() => window.__vcam ? window.__vcam.state() : {error: 'vcam не установлен'}")
 
     def debug_dump_participants(self) -> None:
         """DEBUG: открыть панель участников и вывести в лог реальную структуру —

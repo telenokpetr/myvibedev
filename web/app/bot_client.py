@@ -135,6 +135,70 @@ class WorkerClient:
             log.warning("music_delete failed: %s", exc)
             return None
 
+    # ---- видео в камеру бота ----
+    def video_list(self) -> dict | None:
+        try:
+            r = httpx.get(f"{self.base}/video/list", timeout=10)
+            r.raise_for_status()
+            return r.json()
+        except Exception:  # noqa: BLE001
+            return None
+
+    def video_status(self) -> dict | None:
+        try:
+            r = httpx.get(f"{self.base}/video/status", timeout=15)
+            r.raise_for_status()
+            return r.json()
+        except Exception:  # noqa: BLE001
+            return None
+
+    def video_upload(self, filename: str, data: bytes) -> tuple[dict | None, int]:
+        try:
+            # Сырым телом, имя в query: боту не нужен python-multipart, а 100 МБ
+            # не парсятся как форма. Таймаут щедрый — файл большой.
+            r = httpx.post(f"{self.base}/video/upload", params={"name": filename},
+                           content=data, timeout=180,
+                           headers={"Content-Type": "application/octet-stream"})
+            return r.json(), r.status_code
+        except Exception as exc:  # noqa: BLE001
+            log.warning("video_upload failed: %s", exc)
+            return None, 502
+
+    def video_play(self, name: str) -> tuple[dict | None, int]:
+        try:
+            r = httpx.post(f"{self.base}/video/play", json={"name": name}, timeout=20)
+            return r.json(), r.status_code
+        except Exception as exc:  # noqa: BLE001
+            log.warning("video_play failed: %s", exc)
+            return None, 502
+
+    def video_action(self, action: str) -> dict | None:
+        try:
+            r = httpx.post(f"{self.base}/video/{action}", timeout=15)
+            r.raise_for_status()
+            return r.json()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("video_%s failed: %s", action, exc)
+            return None
+
+    def video_volume(self, volume: int) -> dict | None:
+        try:
+            r = httpx.post(f"{self.base}/video/volume", json={"volume": volume}, timeout=10)
+            r.raise_for_status()
+            return r.json()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("video_volume failed: %s", exc)
+            return None
+
+    def video_delete(self, name: str) -> dict | None:
+        try:
+            r = httpx.delete(f"{self.base}/video/tracks/{name}", timeout=15)
+            r.raise_for_status()
+            return r.json()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("video_delete failed: %s", exc)
+            return None
+
     # ---- аккаунт ----
     def account_status(self) -> dict | None:
         try:

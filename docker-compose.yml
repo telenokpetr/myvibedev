@@ -111,6 +111,12 @@ services:
     environment:
       BOT_NAME: "Веб-модератор"
       WEB_CALLBACK_URL: "http://web:8000"
+      # Пусто = бандловый Chromium. С настоящим Chrome ("chrome") Zoom при
+      # включении камеры выдаёт «Что-то пошло не так, закройте все браузеры» и
+      # шлёт чёрный кадр: с canvas-потоком его конвейер под Chrome не работает
+      # (в контейнере нет GPU). В Chromium тот же поток идёт нормально, но там
+      # нет H.264/AAC — поэтому ролики перегоняем в WebM при загрузке.
+      BROWSER_CHANNEL: ""
       SHOTS_DIR: "/data"
       RECORDINGS_DIR: "/data/recordings"
       REC_GEOMETRY: "1280x800"

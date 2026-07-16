@@ -18,6 +18,10 @@ COPY requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt
 # Chromium уже вшит в playwright-образ; фиксируем на всякий случай.
 RUN playwright install chromium
+# НАСТОЯЩИЙ Google Chrome: бандловый Chromium собран без проприетарных кодеков,
+# и mp4 (H.264/AAC) в нём не играет — в камеру бота проходил только WebM.
+# Chrome их умеет. Запуск — channel="chrome" (см. zoomweb.BROWSER_CHANNEL).
+RUN playwright install --with-deps chrome
 
 COPY . .
 RUN chmod +x entrypoint.sh

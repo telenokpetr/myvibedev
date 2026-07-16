@@ -57,6 +57,7 @@ class BrowserModerator:
         self._commands: queue.Queue = queue.Queue()
         self._cmd_results: dict[str, bool] = {}
         self.recording = False
+        self.video: str | None = None        # имя ролика, играющего в камеру
         # ---- live-debug (без рестартов): выполнять JS/держать панель ----
         self.debug_hold = False
         self._eval_done = threading.Event()
@@ -94,6 +95,15 @@ class BrowserModerator:
         """Поставить команду в очередь потока браузера (Playwright thread-affine)."""
         self._commands.put((name, arg))
 
+    def call(self, method: str, args: list | None = None, timeout: float = 25.0):
+        """Выполнить метод ZoomWeb в потоке браузера и вернуть результат."""
+        self._eval_value = None
+        self._eval_done.clear()
+        self._commands.put(("call", (method, args or [])))
+        if self._eval_done.wait(timeout=timeout):
+            return self._eval_value
+        return {"error": "timeout (браузер занят/не в митинге?)"}
+
     def debug_eval(self, js: str):
         """Выполнить JS на живой странице бота и вернуть результат (для DOM-
         разведки без рестартов). Выполняется в потоке-владельце через очередь."""
@@ -123,12 +133,34 @@ class BrowserModerator:
                 elif name == "mute":
                     ok = web.mute_participant(arg or "")
                     log.info("debug mute %r → %s", arg, ok)
+                elif name == "video_play":
+                    res = web.vcam_play(arg or "")
+                    self.video = arg if res is True else None
+                    log.info("video_play %r → %s", arg, res)
+                elif name == "video_stop":
+                    web.vcam_stop()
+                    self.video = None
+                elif name in ("video_pause", "video_resume"):
+                    web.vcam_command(name.split("_")[1])
+                elif name == "video_volume":
+                    web.vcam_command("volume", float(arg or 100))
                 elif name == "dump_participants":
                     web.debug_dump_participants()
                     # НЕ возвращаем чат сразу — если стоит пауза, панель
                     # участников остаётся открытой для разведки через /debug/eval.
                     if time.time() >= self._pause_until:
                         web.ensure_chat_open()
+                elif name == "call":
+                    # Вызвать метод ZoomWeb в потоке-владельце браузера и
+                    # вернуть результат (для разведки/настроек без рестарта).
+                    try:
+                        meth, cargs = arg
+                        self._eval_value = getattr(web, meth)(*cargs)
+                    except Exception as exc:  # noqa: BLE001
+                        self._eval_value = {"error": repr(exc)[:200]}
+                    finally:
+                        self._eval_done.set()
+                    continue
                 elif name == "eval":
                     try:
                         self._eval_value = web.debug_eval(arg)

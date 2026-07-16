@@ -231,6 +231,42 @@
 
     <section class="card">
       <div class="preview-head">
+        <h2>🎬 Видео (камера бота)</h2>
+        <span class="pill" id="video-state">—</span>
+      </div>
+      <p class="hint">Ролик транслируется <strong>в камеру бота</strong> — участники видят
+         его вместо заставки, вместе со звуком. Форматы .mp4/.webm, до&nbsp;100&nbsp;МБ.
+         Бот должен быть в конференции.</p>
+
+      <div class="control-row">
+        <button id="video-stop" class="ghost" title="Вернуть заставку" disabled>⏹ Стоп</button>
+        <button id="video-playpause" class="ghost" title="Пауза / играть" disabled>⏸</button>
+        <span class="pill" id="video-current">—</span>
+      </div>
+
+      <div class="control-row">
+        <span class="ctl-label">Громкость:</span>
+        <input type="range" id="video-volume" min="0" max="100" value="100"
+               style="flex:1;min-width:150px">
+        <span id="video-volume-val" class="muted">100%</span>
+      </div>
+
+      <div class="control-row">
+        <input type="file" id="video-file" accept=".mp4,.webm,video/mp4,video/webm">
+        <button id="video-upload-btn">📤 Загрузить видео</button>
+        <span id="video-upload-msg" class="msg"></span>
+      </div>
+
+      <div class="table-wrap">
+        <table id="video-list">
+          <thead><tr><th>Ролик</th><th>Размер</th><th></th></tr></thead>
+          <tbody><tr><td colspan="3" class="muted">нет роликов</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="preview-head">
         <h2>🎵 Музыка (микрофон бота)</h2>
         <span class="pill" id="music-state">—</span>
       </div>
@@ -272,6 +308,7 @@
   <script src="/static/preview.js"></script>
   <script src="/static/moderation.js"></script>
   <script src="/static/music.js"></script>
+  <script src="/static/video.js"></script>
   <script src="/static/account.js"></script>
 </body>
 </html>

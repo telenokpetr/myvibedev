@@ -1,13 +1,15 @@
 import logging
 import os
+import re
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(name)s: %(message)s")
 
-from fastapi import FastAPI
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
+from app import vcam
 from app.account import account
 from app.config import config
 from app.moderation import ChatMessage, ProfanityFilter, SpamDetector, classify
@@ -154,6 +156,178 @@ def recordings():
     return {"dir": REC_DIR, "files": sorted(os.listdir(REC_DIR))}
 
 
+# ---- Видео в камеру бота (живой поток, см. vcam.py) ----
+
+class VideoPlayRequest(BaseModel):
+    name: str
+
+
+class VideoVolumeRequest(BaseModel):
+    volume: int = 100
+
+
+@app.get("/video/list")
+def video_list():
+    return {"videos": vcam.list_videos(), "max_bytes": vcam.MAX_UPLOAD,
+            "playing": moderator.video}
+
+
+@app.post("/video/upload")
+async def video_upload(request: Request, name: str):
+    """Загрузка ролика СЫРЫМ телом (не multipart): имя — в query, байты — в body.
+
+    Так не нужен python-multipart в этом образе, и 100 МБ не парсятся как форма —
+    пишем на диск потоком. Клиент — web-сервис (см. bot_client.video_upload).
+    """
+    name = vcam.safe_name(name)
+    if not name.lower().endswith(vcam.ALLOWED_EXT):
+        return JSONResponse({"error": "только .mp4 или .webm"}, status_code=400)
+    vcam.ensure_dir()
+    path = vcam.path_of(name)
+    size = 0
+    try:
+        with open(path, "wb") as f:
+            async for chunk in request.stream():
+                size += len(chunk)
+                if size > vcam.MAX_UPLOAD:
+                    f.close()
+                    os.remove(path)
+                    return JSONResponse({"error": "файл больше 100 МБ"}, status_code=413)
+                f.write(chunk)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"не сохранён: {exc}"}, status_code=500)
+    if not size:
+        os.remove(path)
+        return JSONResponse({"error": "пустой файл"}, status_code=400)
+    if vcam.needs_convert(name):
+        # Chromium не играет mp4 — перегоняем в WebM в фоне (см. vcam.py).
+        final = vcam.convert_async(name)
+        return {"ok": True, "name": final, "size": size, "converting": True}
+    return {"ok": True, "name": name, "size": size}
+
+
+@app.delete("/video/tracks/{name}")
+def video_delete(name: str):
+    path = vcam.path_of(name)
+    if not os.path.exists(path):
+        return JSONResponse({"error": "нет такого ролика"}, status_code=404)
+    if moderator.video == vcam.safe_name(name):
+        moderator.command("video_stop")
+    os.remove(path)
+    return {"ok": True, "videos": vcam.list_videos()}
+
+
+@app.options("/video/file/{name}")
+def video_file_preflight(name: str):
+    """Preflight для Private Network Access: страница Zoom (публичный https)
+    тянет ролик с 127.0.0.1, и Chrome сперва спрашивает разрешение."""
+    return Response(status_code=204, headers={
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": "Range, Content-Type",
+        "Access-Control-Allow-Private-Network": "true",
+        "Access-Control-Max-Age": "86400",
+    })
+
+
+@app.get("/video/file/{name}")
+def video_file(name: str, request: Request):
+    """Отдать ролик СТРАНИЦЕ бота (Chromium ходит сюда на 127.0.0.1).
+
+    CORS обязателен: без него cross-origin видео «портит» canvas и captureStream
+    падает с SecurityError. Range — чтобы <video> мог перематывать и не тянуть
+    все 100 МБ разом.
+    """
+    path = vcam.path_of(name)
+    if not os.path.exists(path):
+        return JSONResponse({"error": "нет такого ролика"}, status_code=404)
+    total = os.path.getsize(path)
+    ctype = "video/webm" if path.lower().endswith(".webm") else "video/mp4"
+    headers = {"Access-Control-Allow-Origin": "*", "Accept-Ranges": "bytes",
+               "Cache-Control": "no-store",
+               # Chrome спрашивает разрешение на выход в локальную сеть
+               # (Private Network Access) — без этого заголовка запрос с
+               # https://app.zoom.us на 127.0.0.1 он режет.
+               "Access-Control-Allow-Private-Network": "true"}
+
+    rng = request.headers.get("range")
+    if not rng:
+        return FileResponse(path, media_type=ctype, headers=headers)
+
+    m = re.match(r"bytes=(\d*)-(\d*)\s*$", rng.strip())
+    if not m or (not m.group(1) and not m.group(2)):
+        return Response(status_code=416,
+                        headers={**headers, "Content-Range": f"bytes */{total}"})
+    if not m.group(1):
+        # Суффиксный диапазон «bytes=-N» = ПОСЛЕДНИЕ N байт. Именно им браузер
+        # забирает индекс mp4 (moov в конце файла, если не делали faststart).
+        # Раньше он читался как «первые N байт» — Chrome получал мусор вместо
+        # moov и падал с «Format error», хотя кодеки были на месте.
+        length = int(m.group(2))
+        if length <= 0:
+            return Response(status_code=416,
+                            headers={**headers, "Content-Range": f"bytes */{total}"})
+        start = max(0, total - length)
+        end = total - 1
+    else:
+        start = int(m.group(1))
+        end = int(m.group(2)) if m.group(2) else total - 1
+    end = min(end, total - 1)
+    if start > end:
+        return Response(status_code=416,
+                        headers={**headers, "Content-Range": f"bytes */{total}"})
+
+    def body():
+        with open(path, "rb") as f:
+            f.seek(start)
+            left = end - start + 1
+            while left > 0:
+                chunk = f.read(min(256 * 1024, left))
+                if not chunk:
+                    break
+                left -= len(chunk)
+                yield chunk
+
+    return StreamingResponse(body(), status_code=206, media_type=ctype, headers={
+        **headers, "Content-Range": f"bytes {start}-{end}/{total}",
+        "Content-Length": str(end - start + 1)})
+
+
+@app.post("/video/play")
+def video_play(req: VideoPlayRequest):
+    if vcam.safe_name(req.name) in vcam._converting:
+        return JSONResponse({"error": "ролик ещё перегоняется в WebM — подождите"},
+                            status_code=409)
+    if not os.path.exists(vcam.path_of(req.name)):
+        return JSONResponse({"error": "нет такого ролика"}, status_code=404)
+    if not moderator.enabled:
+        return JSONResponse({"error": "бот не в конференции"}, status_code=409)
+    moderator.command("video_play", req.name)
+    return {"queued": True, "name": vcam.safe_name(req.name)}
+
+
+@app.post("/video/volume")
+def video_volume(req: VideoVolumeRequest):
+    moderator.command("video_volume", str(req.volume))
+    return {"queued": True, "volume": req.volume}
+
+
+@app.post("/video/{action}")
+def video_action(action: str):
+    if action not in ("stop", "pause", "resume"):
+        return JSONResponse({"error": "неизвестное действие"}, status_code=400)
+    moderator.command(f"video_{action}")
+    return {"queued": True}
+
+
+@app.get("/video/status")
+def video_status():
+    if not moderator.enabled:
+        return {"in_meeting": False, "playing": None}
+    st = moderator.debug_eval("() => window.__vcam ? window.__vcam.state() : null")
+    return {"in_meeting": True, "playing": moderator.video, "page": st}
+
+
 @app.post("/debug/dump_participants")
 def debug_dump_participants():
     """DEBUG: дамп структуры панели участников в логи (для выверки селектора)."""
@@ -171,6 +345,20 @@ def debug_mute(req: MuteRequest):
     мата от него)."""
     moderator.command("mute", req.name)
     return {"queued": True, "name": req.name}
+
+
+class CallRequest(BaseModel):
+    method: str
+    args: list = []
+
+
+@app.post("/debug/call")
+def debug_call(req: CallRequest):
+    """DEBUG: вызвать метод ZoomWeb на живой сессии (напр. enable_original_sound,
+    debug_click, debug_dump) — настройка/разведка без рестарта бота."""
+    if not req.method.isidentifier() or req.method.startswith("_"):
+        return JSONResponse({"error": "плохое имя метода"}, status_code=400)
+    return {"result": moderator.call(req.method, args=req.args)}
 
 
 class EvalRequest(BaseModel):
