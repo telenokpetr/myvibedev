@@ -691,13 +691,14 @@ class ZoomWeb:
 
     def _enable_media_in_meeting(self) -> None:
         self.ensure_video_on()
-        # Сразу снимаем шумодав: иначе звук ролика/музыки Zoom режет как «шум»
-        # и слышно только речь.
+        # Сразу снимаем зумовский шумодав: иначе звук ролика/музыки Zoom режет
+        # как «шум» и слышно только речь. Рычаг — в Настройках, а НЕ в меню
+        # тулбара (галочка там оказалась не тем переключателем).
         try:
-            res = self.enable_original_sound()
-            log.info("шумоподавление при входе: %s", res)
+            res = self.ensure_browser_noise_suppression()
+            log.info("звуковой профиль при входе: %s", res)
         except Exception as exc:  # noqa: BLE001
-            log.warning("шумоподавление при входе не вышло: %s", str(exc)[:100])
+            log.warning("звуковой профиль при входе не выставлен: %s", str(exc)[:100])
 
     def ensure_video_on(self) -> None:
         """Включить камеру, если выключена. Кнопка тумблера в тулбаре: когда
@@ -1175,8 +1176,8 @@ class ZoomWeb:
         p.wait_for_timeout(1800)          # диалог рисуется не мгновенно
         return {"ok": True, "seen": self.debug_dump()}
 
-    def set_audio_profile(self, profile: str = "оригинальн|original|live performance") -> dict:
-        """Выбрать звуковой профиль в открытом диалоге настроек (радиокнопка)."""
+    def set_audio_profile(self, profile: str = "встроенное в браузер|browser built-in") -> dict:
+        """Выбрать звуковой профиль в ОТКРЫТОМ диалоге настроек (радиокнопка)."""
         p = self.page
         box = p.evaluate(_JS_FIND_TEXT, profile)
         if not box or box.get("none"):
@@ -1186,6 +1187,25 @@ class ZoomWeb:
         p.wait_for_timeout(700)
         log.info("звуковой профиль: выбран %s", box.get("txt"))
         return {"ok": True, "clicked": box}
+
+    def ensure_browser_noise_suppression(self) -> dict:
+        """Снять зумовский шумодав с нашего звука — РАБОЧИЙ путь, вызывается при
+        входе.
+
+        Zoom считает синтетический трек микрофоном и «Удалением фонового шума»
+        съедает музыку (доходит только голос). Ставим «Встроенное в браузер
+        шумоподавление»: к WebAudio-треку браузер обработку не применяет, т.е.
+        это и есть «выключить». В меню тулбара нужного рычага НЕТ — только
+        здесь, в Настройках.
+        """
+        res = self.open_audio_settings()
+        if not res.get("ok"):
+            return {"ok": False, "step": "открыть настройки", **res}
+        out = self.set_audio_profile()
+        # Диалог обязательно закрыть: поверх него не работают чат и модерация.
+        self.page.keyboard.press("Escape")
+        self.page.wait_for_timeout(500)
+        return out
 
     # ---- виртуальная камера (живой поток с canvas, см. vcam.py) ----
 
