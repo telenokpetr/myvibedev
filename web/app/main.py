@@ -198,14 +198,24 @@ VIDEO_MAX = 100 * 1024 * 1024  # 100 МБ
 def _fix_filename(name: str) -> str:
     """Починить имя файла из multipart.
 
-    Браузер шлёт имя в UTF-8, а стандарт multipart предписывает latin-1 —
-    starlette так и декодирует, и «Иордан» приезжает как «Èîðäàí». Гоняем
-    байты обратно; если не сходится (имя и было latin-1) — оставляем как есть.
+    Стандарт multipart предписывает latin-1, и starlette так и декодирует —
+    поэтому «Иордан» приезжает мохнатым. Возвращаем байты назад и пробуем
+    угадать настоящую кодировку:
+      * браузер шлёт UTF-8 → мойибаке вида «Ð\x98Ð¾Ñ\x80...»;
+      * curl из Windows-консоли шлёт CP1251 → «Èîðäàí» (так ловилось в тестах).
+    UTF-8 проверяем ПЕРВЫМ: он строгий и на чужих байтах честно падает, а
+    CP1251 «переварит» почти что угодно и молча испортит правильное имя.
     """
     try:
-        return name.encode("latin-1").decode("utf-8")
-    except (UnicodeEncodeError, UnicodeDecodeError):
-        return name
+        raw = name.encode("latin-1")
+    except UnicodeEncodeError:
+        return name                      # имя и так нормальное (не latin-1)
+    for enc in ("utf-8", "cp1251"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return name
 
 
 @app.get("/api/bot/video/list")
