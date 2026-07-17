@@ -282,3 +282,7 @@ details.help p { margin: 0.4rem 0; }
   font-size: 0.85em;
   white-space: nowrap;
 }
+
+/* Тумблер «Авто-впуск» в карточке зала ожидания */
+.switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.switch input { width: 18px; height: 18px; cursor: pointer; }

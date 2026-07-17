@@ -15,6 +15,7 @@ from app.config import config
 from app.moderation import ChatMessage, ProfanityFilter, SpamDetector, classify
 from app.moderator import moderator
 from app.recorder import recorder
+from app.waitroom import gatekeeper
 
 app = FastAPI(title="Zoom Browser Bot", version="0.1.0")
 
@@ -333,6 +334,65 @@ def video_status():
         return {"in_meeting": False, "playing": None}
     st = moderator.debug_eval("() => window.__vcam ? window.__vcam.state() : null")
     return {"in_meeting": True, "playing": moderator.video, "page": st}
+
+
+# ---- Модерация зала ожидания (впуск по списку, см. waitroom.py) ----
+
+class NameRequest(BaseModel):
+    name: str
+
+
+class EnabledRequest(BaseModel):
+    on: bool = True
+
+
+@app.get("/waitroom/status")
+def waitroom_status():
+    st = gatekeeper.state()
+    # Текущие имена в зале ожидания — с живой страницы, если бот в митинге.
+    if moderator.enabled:
+        try:
+            st["waiting"] = moderator.call("read_waiting_room") or []
+        except Exception:  # noqa: BLE001
+            st["waiting"] = []
+    else:
+        st["waiting"] = []
+    return st
+
+
+@app.post("/waitroom/enabled")
+def waitroom_enabled(req: EnabledRequest):
+    return gatekeeper.set_enabled(req.on)
+
+
+@app.post("/waitroom/names")
+def waitroom_add(req: NameRequest):
+    if not (req.name or "").strip():
+        return JSONResponse({"error": "пустое имя"}, status_code=400)
+    return gatekeeper.add(req.name)
+
+
+@app.delete("/waitroom/names/{name}")
+def waitroom_remove(name: str):
+    return gatekeeper.remove(name)
+
+
+@app.post("/waitroom/admit")
+def waitroom_admit(req: NameRequest):
+    """Ручной впуск конкретного человека из зала ожидания."""
+    if not moderator.enabled:
+        return JSONResponse({"error": "бот не в конференции"}, status_code=409)
+    ok = moderator.call("admit", args=[req.name])
+    return {"ok": bool(ok), "name": req.name}
+
+
+@app.post("/waitroom/deny")
+def waitroom_deny(req: NameRequest):
+    """Ручной возврат участника в зал ожидания."""
+    if not moderator.enabled:
+        return JSONResponse({"error": "бот не в конференции"}, status_code=409)
+    ok = moderator.call("send_to_waiting", args=[req.name])
+    return {"ok": bool(ok), "name": req.name}
 
 
 @app.post("/debug/dump_participants")

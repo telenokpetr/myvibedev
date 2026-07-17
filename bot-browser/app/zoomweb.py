@@ -55,6 +55,27 @@ _JS_FIND_TEXT = r"""
 }
 """
 
+# Координаты кнопки «Принять» в том тосте зала ожидания, где упомянут name.
+# Идём от кнопки вверх по предкам, ищем предка с текстом-именем.
+_JS_ADMIT_BTN = r"""
+(name) => {
+  const nrx = new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+  const arx = /^\s*(принять|admit)\s*$/i;
+  const btns = [...document.querySelectorAll('button')]
+    .filter(b => b.offsetParent && arx.test((b.innerText || '').trim()));
+  for (const b of btns) {
+    let e = b;
+    for (let i = 0; i < 6 && e; i++, e = e.parentElement) {
+      if (nrx.test(e.innerText || '')) {
+        const r = b.getBoundingClientRect();
+        if (r.width && r.height) return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+      }
+    }
+  }
+  return { none: true };
+}
+"""
+
 # Стоит ли галочка на пункте-режиме: Zoom рисует её либо aria-checked, либо
 # символом ✓ в строке пункта.
 _JS_CHECKED = r"""
@@ -793,6 +814,87 @@ class ZoomWeb:
         return self.page is not None and "/wc/" in (self.page.url or "")
 
     # ---- чтение чата ----
+
+    # ---- зал ожидания (host-контрол: впуск/возврат по имени) ----
+
+    # Тост Zoom: «{Имя} в зале ожидания» + кнопки «Принять»/«Посмотреть».
+    _JS_WAITING = r"""
+    () => {
+      const out = [];
+      const RX = /(.+?)\s+(?:в зале ожидания|is in the waiting room|joined and is waiting|ожида)/i;
+      document.querySelectorAll('*').forEach(e => {
+        if (!e.offsetParent) return;
+        const own = [...e.childNodes].filter(n => n.nodeType === 3)
+          .map(n => n.textContent).join(' ').trim();
+        const m = own.match(RX);
+        if (m && m[1].trim()) out.push(m[1].trim());
+      });
+      return [...new Set(out)];
+    }
+    """
+
+    def read_waiting_room(self) -> list[str]:
+        """Имена, ожидающие впуска (из тостов Zoom). Пусто, если очередь пуста."""
+        try:
+            return self.page.evaluate(self._JS_WAITING) or []
+        except Exception as exc:  # noqa: BLE001
+            log.warning("read_waiting_room: %s", exc)
+            return []
+
+    def admit(self, name: str) -> bool:
+        """Впустить конкретного человека из зала ожидания.
+
+        Кнопка «Принять» живёт в тосте рядом с именем. Кликаем МЫШЬЮ по
+        координатам той «Принять», чей тост упоминает name (Playwright-локатор по
+        таким кнопкам таймаутится, как и в меню звука)."""
+        p = self.page
+        self._reveal_toolbar()
+        box = p.evaluate(_JS_ADMIT_BTN, name)
+        if not box or box.get("none"):
+            log.info("admit: кнопка «Принять» для %r не найдена", name)
+            return False
+        p.mouse.click(box["x"], box["y"])
+        p.wait_for_timeout(600)
+        log.info("admit: впущен %r", name)
+        return True
+
+    def send_to_waiting(self, name: str) -> bool:
+        """Вернуть участника в зал ожидания через меню «...» его видео-плитки
+        (у ХОСТА там есть «Перевести в зал ожидания»)."""
+        p = self.page
+        self._reveal_toolbar()
+        tile = p.locator('[class*="video-avatar__avatar"]').filter(has_text=name).first
+        if tile.count() == 0:
+            tile = p.locator(f'[class*="video-avatar"]:has(img[alt="{name}"])').first
+        if tile.count() == 0:
+            log.info("send_to_waiting: плитка %r не найдена", name)
+            return False
+        try:
+            tile.scroll_into_view_if_needed(timeout=2000)
+            tile.hover(timeout=2000)
+            p.wait_for_timeout(400)
+        except Exception:  # noqa: BLE001
+            pass
+        menu = tile.locator('button[aria-label*="more" i], button[aria-label*="Ещё" i], '
+                            'button[aria-label*="еще" i], button[aria-label*="managing" i]')
+        if menu.count() == 0:
+            log.info("send_to_waiting: у плитки %r нет «...»", name)
+            return False
+        try:
+            menu.last.click(timeout=1800)
+        except Exception:  # noqa: BLE001
+            return False
+        p.wait_for_timeout(600)
+        box = p.evaluate(_JS_FIND_TEXT,
+                         r"перевести в зал ожидания|put in waiting room|в зал ожидания")
+        if not box or box.get("none"):
+            p.keyboard.press("Escape")
+            log.info("send_to_waiting: пункт «в зал ожидания» не найден у %r", name)
+            return False
+        p.mouse.click(box["x"], box["y"])
+        p.wait_for_timeout(500)
+        log.info("send_to_waiting: %r возвращён в зал", name)
+        return True
 
     def read_chat(self) -> list[dict]:
         try:

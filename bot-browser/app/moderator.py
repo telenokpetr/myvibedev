@@ -262,6 +262,62 @@ class BrowserModerator:
             return
         for m in new:
             self._process(web, m, backlog=False)
+        self._gatekeep(web, new)
+
+    def _gatekeep(self, web: ZoomWeb, new_msgs: list[dict]) -> None:
+        """Модерация зала ожидания: впуск по списку разрешённых (см. waitroom.py).
+        Дешёвый ранний выход, если фича выключена и никого не ждём."""
+        from app.waitroom import gatekeeper, ASK_TIMEOUT, _words
+        if not gatekeeper.enabled and not gatekeeper.pending:
+            return
+        now = time.time()
+
+        # 1) Условно впущенные без фамилии: ждём фамилию в чате.
+        for name in list(gatekeeper.pending):
+            said = [m for m in new_msgs
+                    if _words(m["sender"]) & _words(name) or m["sender"] == name]
+            if said:
+                text = " ".join(m["text"] for m in said)
+                if gatekeeper.matches(name + " " + text):
+                    gatekeeper.note(name, "kept", "фамилия подтверждена по списку")
+                    web.send_chat(f"{name}, спасибо — доступ подтверждён.")
+                else:
+                    web.send_to_waiting(name)
+                    gatekeeper.note(name, "returned", "фамилия не из списка")
+                gatekeeper.pending.pop(name, None)
+            elif now - gatekeeper.pending[name] > ASK_TIMEOUT:
+                web.send_to_waiting(name)
+                gatekeeper.note(name, "returned", "не указал фамилию вовремя")
+                gatekeeper.pending.pop(name, None)
+
+        # 2) Разбор очереди зала ожидания.
+        if not gatekeeper.enabled:
+            return
+        try:
+            waiting = web.read_waiting_room()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("read_waiting_room: %s", exc)
+            return
+        for name in waiting:
+            if name in gatekeeper.pending:
+                continue
+            action = gatekeeper.decide(name)
+            if action == "reject":
+                # Неприемлемый ник — НЕ впускаем. Оставляем в зале (решение
+                # об удалении за человеком), помечаем один раз.
+                if name not in gatekeeper._rejected:
+                    gatekeeper._rejected.add(name)
+                    gatekeeper.note(name, "rejected", "неприемлемый ник")
+            elif action == "admit":
+                if web.admit(name):
+                    gatekeeper.note(name, "admitted", "имя/фамилия в списке")
+            elif action == "ask_surname":
+                if web.admit(name):
+                    gatekeeper.pending[name] = now
+                    web.send_chat(f"{name}, укажите вашу фамилию в чате — "
+                                  "иначе вернём в зал ожидания.")
+                    gatekeeper.note(name, "asked", "нет фамилии — впущен условно")
+            # leave → ничего не делаем, решает человек вручную
 
     def _process(self, web: ZoomWeb, m: dict, backlog: bool) -> None:
         msg = ChatMessage(sender=m["sender"], text=m["text"], mid=m["id"])

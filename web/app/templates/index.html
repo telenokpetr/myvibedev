@@ -231,6 +231,43 @@
 
     <section class="card">
       <div class="preview-head">
+        <h2>🚪 Зал ожидания (впуск по списку)</h2>
+        <span class="pill" id="wr-state">—</span>
+      </div>
+      <p class="hint">Бот (как организатор) впускает по <strong>списку фамилий/имён</strong>:
+         совпало любое слово — впускает; нет в списке — оставляет в зале, решаешь ты.
+         Без фамилии (одно слово) — впускает и просит фамилию в чате, не ответил — возвращает.</p>
+
+      <div class="control-row">
+        <label class="switch">
+          <input type="checkbox" id="wr-enabled"> <span>Авто-впуск по списку</span>
+        </label>
+      </div>
+
+      <div class="control-row">
+        <input type="text" id="wr-name" placeholder="Фамилия или имя" style="flex:1;min-width:160px">
+        <button id="wr-add">＋ В список</button>
+        <span id="wr-msg" class="msg"></span>
+      </div>
+
+      <div class="table-wrap">
+        <table id="wr-names">
+          <thead><tr><th>Разрешённые</th><th></th></tr></thead>
+          <tbody><tr><td colspan="2" class="muted">список пуст</td></tr></tbody>
+        </table>
+      </div>
+
+      <p class="hint" style="margin-top:10px">В зале ожидания сейчас:</p>
+      <div class="table-wrap">
+        <table id="wr-waiting">
+          <thead><tr><th>Ожидают</th><th></th></tr></thead>
+          <tbody><tr><td colspan="2" class="muted">никого</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="preview-head">
         <h2>🎬 Медиа бота (видео / музыка)</h2>
         <span class="pill" id="video-state">—</span>
       </div>
@@ -312,6 +349,7 @@
   <script src="/static/moderation.js"></script>
   <script src="/static/music.js"></script>
   <script src="/static/video.js"></script>
+  <script src="/static/waitroom.js"></script>
   <script src="/static/account.js"></script>
 </body>
 </html>

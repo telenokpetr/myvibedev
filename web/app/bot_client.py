@@ -199,6 +199,56 @@ class WorkerClient:
             log.warning("video_delete failed: %s", exc)
             return None
 
+    # ---- зал ожидания (впуск по списку) ----
+    def waitroom_status(self) -> dict | None:
+        try:
+            r = httpx.get(f"{self.base}/waitroom/status", timeout=15)
+            r.raise_for_status()
+            return r.json()
+        except Exception:  # noqa: BLE001
+            return None
+
+    def waitroom_enabled(self, on: bool) -> dict | None:
+        try:
+            r = httpx.post(f"{self.base}/waitroom/enabled", json={"on": on}, timeout=10)
+            r.raise_for_status()
+            return r.json()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("waitroom_enabled failed: %s", exc)
+            return None
+
+    def waitroom_add(self, name: str) -> dict | None:
+        try:
+            r = httpx.post(f"{self.base}/waitroom/names", json={"name": name}, timeout=10)
+            return r.json()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("waitroom_add failed: %s", exc)
+            return None
+
+    def waitroom_remove(self, name: str) -> dict | None:
+        try:
+            r = httpx.delete(f"{self.base}/waitroom/names/{name}", timeout=10)
+            return r.json()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("waitroom_remove failed: %s", exc)
+            return None
+
+    def waitroom_admit(self, name: str) -> dict | None:
+        try:
+            r = httpx.post(f"{self.base}/waitroom/admit", json={"name": name}, timeout=20)
+            return r.json()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("waitroom_admit failed: %s", exc)
+            return None
+
+    def waitroom_deny(self, name: str) -> dict | None:
+        try:
+            r = httpx.post(f"{self.base}/waitroom/deny", json={"name": name}, timeout=20)
+            return r.json()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("waitroom_deny failed: %s", exc)
+            return None
+
     # ---- аккаунт ----
     def account_status(self) -> dict | None:
         try:

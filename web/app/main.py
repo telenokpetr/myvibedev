@@ -199,6 +199,46 @@ def bot_music_action(action: str, slot: int = 0):
     return (w.music_action(action) if w else None) or UNAVAILABLE
 
 
+# ---- Зал ожидания: впуск по списку ----
+@app.get("/api/bot/waitroom/status")
+def bot_waitroom_status(slot: int = 0):
+    w = _worker(slot)
+    return (w.waitroom_status() if w else None) or UNAVAILABLE
+
+
+@app.post("/api/bot/waitroom/enabled")
+def bot_waitroom_enabled(payload: dict = Body(...), slot: int = 0):
+    w = _worker(slot)
+    return (w.waitroom_enabled(bool(payload.get("on"))) if w else None) or UNAVAILABLE
+
+
+@app.post("/api/bot/waitroom/names")
+def bot_waitroom_add(payload: dict = Body(...), slot: int = 0):
+    name = (payload.get("name") or "").strip()
+    if not name:
+        return JSONResponse({"error": "пустое имя"}, status_code=400)
+    w = _worker(slot)
+    return (w.waitroom_add(name) if w else None) or UNAVAILABLE
+
+
+@app.delete("/api/bot/waitroom/names/{name}")
+def bot_waitroom_remove(name: str, slot: int = 0):
+    w = _worker(slot)
+    return (w.waitroom_remove(name) if w else None) or UNAVAILABLE
+
+
+@app.post("/api/bot/waitroom/admit")
+def bot_waitroom_admit(payload: dict = Body(...), slot: int = 0):
+    w = _worker(slot)
+    return (w.waitroom_admit((payload.get("name") or "").strip()) if w else None) or UNAVAILABLE
+
+
+@app.post("/api/bot/waitroom/deny")
+def bot_waitroom_deny(payload: dict = Body(...), slot: int = 0):
+    w = _worker(slot)
+    return (w.waitroom_deny((payload.get("name") or "").strip()) if w else None) or UNAVAILABLE
+
+
 # ---- Видео в камеру бота ----
 VIDEO_MAX = 100 * 1024 * 1024  # 100 МБ
 
