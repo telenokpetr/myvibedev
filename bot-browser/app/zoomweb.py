@@ -383,6 +383,30 @@ class ZoomWeb:
         log.info("cookie: вход подтверждён, url=%s email=%r", p.url, email)
         return True, (email or "Zoom (cookie-сессия)")
 
+    def verify_authorized(self) -> tuple[bool, str]:
+        """Открыть zoom.us/profile и проверить, авторизован ли профиль (без
+        cookie-импорта). Используется после РУЧНОГО входа и как проверка сессии
+        профиля перед заходом. Возвращает (ok, email/имя)."""
+        p = self.page
+        try:
+            p.goto("https://zoom.us/profile", wait_until="domcontentloaded", timeout=45000)
+            p.wait_for_timeout(3000)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("verify_authorized goto: %s", exc)
+        url = (p.url or "").lower()
+        self._shot("auth_verify")
+        if "/signin" in url or "/login" in url:
+            return False, "не авторизован (редирект на вход)"
+        email = ""
+        try:
+            email = p.evaluate(
+                "() => { const m = (document.body.innerText||'')"
+                ".match(/[\\w.+-]+@[\\w-]+\\.[\\w.-]+/); return m ? m[0] : ''; }") or ""
+        except Exception:  # noqa: BLE001
+            pass
+        log.info("verify_authorized: ок, url=%s email=%r", p.url, email)
+        return True, (email or "Zoom (профиль)")
+
     def goto_signin(self) -> None:
         try:
             self.page.goto("https://www.zoom.us/signin",

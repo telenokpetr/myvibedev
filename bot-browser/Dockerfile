@@ -23,10 +23,24 @@ RUN playwright install chromium
 # Chrome их умеет. Запуск — channel="chrome" (см. zoomweb.BROWSER_CHANNEL).
 RUN playwright install --with-deps chrome
 
+# x11vnc + noVNC + websockify — доступ к экрану браузера бота через браузер
+# человека (http://localhost:6080): нужен для РУЧНОГО входа в Zoom-аккаунт бота
+# (reCAPTCHA пропускает живую мышь), сессия оседает в профиле и держится долго.
+# ОТДЕЛЬНЫМ слоем ПОСЛЕ playwright — чтобы не инвалидировать дорогие слои с
+# Chromium/Chrome при добавлении этих пакетов.
+# DEBIAN_FRONTEND=noninteractive: novnc тянет tzdata, а та в интерактиве спрашивает
+# часовой пояс («Geographic area:») и ВЕШАЕТ сборку намертво.
+RUN DEBIAN_FRONTEND=noninteractive apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        x11vnc \
+        novnc \
+        websockify \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY . .
 RUN chmod +x entrypoint.sh
 
 ENV DISPLAY=:99
-EXPOSE 9100
+EXPOSE 9100 6080
 ENTRYPOINT ["./entrypoint.sh"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "9100"]

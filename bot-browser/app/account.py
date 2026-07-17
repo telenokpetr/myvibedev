@@ -109,6 +109,29 @@ class AccountManager:
             self._q.put(("import_cookies", None, None))
         return self.status()
 
+    def manual_login_start(self) -> dict:
+        """Открыть страницу входа Zoom в браузере бота и ДЕРЖАТЬ её — человек
+        логинится руками через noVNC (reCAPTCHA пропускает живую мышь). Сессия
+        осядет в профиле /data/zoomprofile и будет держаться долго."""
+        from app.moderator import moderator
+        if moderator.enabled:
+            return {"state": "error", "email": self.email,
+                    "error": "бот сейчас в конференции — сначала выйдите из неё"}
+        with self._lock:
+            self.error = ""
+            self.state = "manual_login"
+            self._ensure_thread()
+            self._q.put(("manual_login", None, None))
+        return self.status()
+
+    def manual_login_finish(self) -> dict:
+        """Проверить, что человек вошёл (страница профиля не редиректит на
+        signin), сохранить и закрыть браузер."""
+        with self._lock:
+            self._ensure_thread()
+            self._q.put(("manual_finish", None, None))
+        return self.status()
+
     def sign_out(self) -> dict:
         self.state = "logged_out"
         self.email = ""
@@ -129,6 +152,9 @@ class AccountManager:
             try:
                 cmd = self._q.get(timeout=300)   # простой 5 мин → закрыть браузер
             except queue.Empty:
+                # В ручном входе браузер держим открытым сколько нужно человеку.
+                if self.state == "manual_login":
+                    continue
                 self._close_web()
                 return
             name = cmd[0]
@@ -139,12 +165,16 @@ class AccountManager:
                     self._do_otp(cmd[1])
                 elif name == "import_cookies":
                     self._do_import_cookies()
+                elif name == "manual_login":
+                    self._do_manual_login()
+                elif name == "manual_finish":
+                    self._do_manual_finish()
             except Exception as exc:  # noqa: BLE001
                 log.exception("account %s: %s", name, exc)
                 self.state = "error"
                 self.error = f"сбой входа: {exc}"
             # Терминальные состояния — закрыть браузер (флашит профиль на диск).
-            # waiting_otp НЕ закрываем: тот же сеанс нужен для ввода кода.
+            # waiting_otp и manual_login НЕ закрываем: сеанс нужен для ввода.
             if self.state in ("logged_in", "logged_out", "error"):
                 self._close_web()
 
@@ -207,6 +237,35 @@ class AccountManager:
         else:
             self.state = "error"
             self.error = msg
+
+    def _do_manual_login(self) -> None:
+        """Открыть страницу входа Zoom и оставить браузер человеку (noVNC)."""
+        self.state = "manual_login"
+        self.error = ""
+        self._ensure_web()
+        try:
+            self._web.page.goto("https://www.zoom.us/signin",
+                                 wait_until="domcontentloaded", timeout=45000)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("manual_login goto: %s", exc)
+        log.info("ручной вход: страница логина открыта, жду человека (noVNC :6080)")
+
+    def _do_manual_finish(self) -> None:
+        """Проверить, что человек вошёл, сохранить сессию, закрыть браузер."""
+        if self._web is None:
+            self.state = "error"
+            self.error = "сеанс входа не активен — начните заново"
+            return
+        ok, who = self._web.verify_authorized()
+        if ok:
+            self.state = "logged_in"
+            self.email = who or "Zoom (ручной вход)"
+            self._save_marker()
+            log.info("ручной вход подтверждён: %s", self.email)
+        else:
+            # не вышло — оставляем сеанс открытым для повторной попытки
+            self.state = "manual_login"
+            self.error = "вход ещё не завершён (страница профиля недоступна)"
 
     def _do_otp(self, code: str) -> None:
         if self._web is None:

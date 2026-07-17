@@ -151,6 +151,20 @@ def bot_account_otp(payload: dict = Body(...), slot: int = 0):
     return (w.account_otp(code) if w else None) or UNAVAILABLE
 
 
+@app.post("/api/bot/account/manual-login")
+def bot_account_manual_login(slot: int = 0):
+    """Открыть страницу входа Zoom в браузере бота — человек логинится РУКАМИ
+    через noVNC (http://localhost:6080). Пароль вводит человек, не сервер."""
+    w = _worker(slot)
+    return (w.account_manual_login() if w else None) or UNAVAILABLE
+
+
+@app.post("/api/bot/account/manual-finish")
+def bot_account_manual_finish(slot: int = 0):
+    w = _worker(slot)
+    return (w.account_manual_finish() if w else None) or UNAVAILABLE
+
+
 # ---- Музыка ----
 MUSIC_MAX = 5 * 1024 * 1024  # 5 МБ
 

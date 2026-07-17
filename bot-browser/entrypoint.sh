@@ -22,4 +22,15 @@ done
 # PulseAudio для fake-микрофона музыкального браузера (пока не используется).
 pulseaudio --start --exit-idle-time=-1 >/tmp/pulse.log 2>&1 || true
 
+# Экран браузера бота наружу через noVNC (для РУЧНОГО входа в Zoom-аккаунт):
+# x11vnc отдаёт дисплей :99, websockify заворачивает его в веб на :6080.
+# Порт биндится только на 127.0.0.1 (см. docker-compose) — доступ с этой машины.
+# -nopw без пароля намеренно: доступ уже ограничен localhost'ом.
+x11vnc -display :99 -forever -shared -nopw -rfbport 5900 -bg \
+       -o /tmp/x11vnc.log >/dev/null 2>&1 || true
+NOVNC_DIR=/usr/share/novnc
+[ -f "$NOVNC_DIR/vnc.html" ] && [ ! -f "$NOVNC_DIR/index.html" ] && \
+  ln -sf vnc.html "$NOVNC_DIR/index.html" 2>/dev/null || true
+websockify --web="$NOVNC_DIR" 6080 localhost:5900 >/tmp/novnc.log 2>&1 &
+
 exec "$@"

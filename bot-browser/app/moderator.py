@@ -184,16 +184,23 @@ class BrowserModerator:
         self._web = web
         try:
             web.start()
-            # Cookie тянем из файла ПЕРЕД каждым заходом: сессия Zoom живёт
-            # ~сутки, и на протухшей бот раньше молча заходил анонимом и ловил
-            # бан «боты не могут присоединяться». Лучше честно не зайти.
-            ok, msg = web.refresh_auth_from_file()
+            # Авторизация перед заходом. Приоритет — СЕССИЯ ПРОФИЛЯ (ручной вход
+            # через noVNC держится долго и сам обновляется). Если профиль не
+            # авторизован — падаем на cookie-файл (снимок из браузера человека).
+            # На протухшей сессии бот раньше молча заходил анонимом и ловил бан —
+            # теперь честно не заходим.
+            ok, msg = web.verify_authorized()
+            if ok:
+                log.info("сессия профиля активна: %s", msg)
+            else:
+                log.info("профиль не авторизован (%s) — пробую cookie-файл", msg)
+                ok, msg = web.refresh_auth_from_file()
             self.auth_error = "" if ok else msg
             if not ok:
                 self.status = "auth_expired"
                 log.warning("вход отменён: %s", msg)
                 return
-            log.info("cookie приняты: %s", msg or "авторизован")
+            log.info("авторизация ок: %s", msg)
             if not web.join(self._join_url):
                 self.status = "error"
                 log.warning("вход не подтверждён")

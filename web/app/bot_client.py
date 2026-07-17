@@ -268,6 +268,24 @@ class WorkerClient:
             log.warning("account_sign_in failed: %s", exc)
             return None
 
+    def account_manual_login(self) -> dict | None:
+        try:
+            r = httpx.post(f"{self.base}/account/manual-login", timeout=60)
+            r.raise_for_status()
+            return r.json()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("account_manual_login failed: %s", exc)
+            return None
+
+    def account_manual_finish(self) -> dict | None:
+        try:
+            r = httpx.post(f"{self.base}/account/manual-finish", timeout=60)
+            r.raise_for_status()
+            return r.json()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("account_manual_finish failed: %s", exc)
+            return None
+
     def account_otp(self, code: str) -> dict | None:
         try:
             r = httpx.post(f"{self.base}/account/otp", json={"code": code}, timeout=15)

@@ -80,6 +80,20 @@ def account_otp(req: OtpRequest):
     return account.otp(req.code.strip())
 
 
+@app.post("/account/manual-login")
+def account_manual_login():
+    """Открыть страницу входа Zoom в браузере бота и держать её — человек
+    логинится РУКАМИ через noVNC (http://localhost:6080). Сессия осядет в
+    профиле и будет держаться долго (в отличие от cookie-снимка)."""
+    return account.manual_login_start()
+
+
+@app.post("/account/manual-finish")
+def account_manual_finish():
+    """Подтвердить, что человек вошёл: проверить профиль, сохранить, закрыть."""
+    return account.manual_login_finish()
+
+
 @app.post("/account/import-cookies")
 def account_import_cookies():
     """Импорт готовой Zoom-сессии из /data/zoom-cookies.json (обход reCAPTCHA:

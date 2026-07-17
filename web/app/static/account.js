@@ -18,16 +18,66 @@ const AC = {
   nick: accEl("acc-nick"),
   nickSave: accEl("acc-nick-save"),
   nickMsg: accEl("acc-nick-msg"),
+  manual: accEl("acc-manual"),
+  vnc: accEl("acc-vnc"),
+  manualDone: accEl("acc-manual-done"),
+  manualMsg: accEl("acc-manual-msg"),
 };
 
 const ACC_LABELS = {
   logged_out: "не вошёл",
   signing_in: "вход…",
   waiting_otp: "нужен код",
+  manual_login: "ручной вход…",
   logged_in: "вошёл",
   error: "ошибка",
   unavailable: "недоступно",
 };
+
+// Долгий вход: открыть форму в браузере бота → пользователь логинится через
+// noVNC (localhost:6080) → «Я вошёл» проверяет и сохраняет сессию профиля.
+AC.manual.addEventListener("click", async () => {
+  AC.manualMsg.textContent = "открываю форму входа в браузере бота…";
+  AC.manualMsg.className = "msg";
+  try {
+    const r = await fetch("/api/bot/account/manual-login", { method: "POST" });
+    const j = await r.json();
+    if (j.error) {
+      AC.manualMsg.textContent = j.error;
+      AC.manualMsg.className = "msg err";
+      return;
+    }
+    AC.vnc.style.display = "";
+    AC.manualDone.style.display = "";
+    AC.manualMsg.innerHTML = 'Откройте <b>экран бота</b> (кнопка 2), войдите в Zoom ' +
+      'руками — поставьте галку «Оставаться в системе». Потом нажмите «Я вошёл».';
+    AC.manualMsg.className = "msg";
+  } catch (e) {
+    AC.manualMsg.textContent = "ошибка сети";
+    AC.manualMsg.className = "msg err";
+  }
+});
+
+AC.manualDone.addEventListener("click", async () => {
+  AC.manualMsg.textContent = "проверяю…";
+  AC.manualMsg.className = "msg";
+  try {
+    const r = await fetch("/api/bot/account/manual-finish", { method: "POST" });
+    const j = await r.json();
+    if (j.state === "logged_in") {
+      AC.manualMsg.textContent = "готово — вошёл как " + (j.email || "аккаунт бота");
+      AC.manualMsg.className = "msg ok";
+      AC.vnc.style.display = "none";
+      AC.manualDone.style.display = "none";
+    } else {
+      AC.manualMsg.textContent = j.error || "вход ещё не завершён — войдите на экране бота";
+      AC.manualMsg.className = "msg err";
+    }
+  } catch (e) {
+    AC.manualMsg.textContent = "ошибка сети";
+    AC.manualMsg.className = "msg err";
+  }
+});
 
 function renderAcc(s) {
   const st = s && s.state ? s.state : "unavailable";
