@@ -845,13 +845,20 @@ class ZoomWeb:
     _JS_WAITING = r"""
     () => {
       const out = [];
-      const RX = /(.+?)\s+(?:в зале ожидания|is in the waiting room|joined and is waiting|ожида)/i;
+      // ТОЛЬКО конкретные фразы зала ожидания. Раньше было широкое «ожида» —
+      // ловило «Срок ОЖИДАния подключения истёк» (диалог обрыва связи) и выдавало
+      // «Срок» за ожидающего.
+      const RX = /(.+?)\s+(?:в зале ожидания|ожидает в зале|is in the waiting room|joined and is waiting|is waiting to join)/i;
       document.querySelectorAll('*').forEach(e => {
         if (!e.offsetParent) return;
         const own = [...e.childNodes].filter(n => n.nodeType === 3)
           .map(n => n.textContent).join(' ').trim();
         const m = own.match(RX);
-        if (m && m[1].trim()) out.push(m[1].trim());
+        if (m && m[1].trim()) {
+          // Обрезаем мусор в начале (иконка/дефис в тосте давали «-Никита»).
+          const name = m[1].trim().replace(/^[^\p{L}]+/u, '').trim();
+          if (name) out.push(name);
+        }
       });
       return [...new Set(out)];
     }
