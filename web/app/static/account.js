@@ -47,6 +47,10 @@ AC.manual.addEventListener("click", async () => {
       AC.manualMsg.className = "msg err";
       return;
     }
+    // Экран нужного бота: слот 0 → noVNC 6080, слот 1 → 6081.
+    const vncPort = 6080 + (window.currentSlot || 0);
+    AC.vnc.href = "http://localhost:" + vncPort +
+      "/vnc.html?autoconnect=1&resize=remote";
     AC.vnc.style.display = "";
     AC.manualDone.style.display = "";
     AC.manualMsg.innerHTML = 'Откройте <b>экран бота</b> (кнопка 2), войдите в Zoom ' +
