@@ -1581,19 +1581,41 @@ class ZoomWeb:
         for attempt in range(3):
             try:
                 el.scroll_into_view_if_needed(timeout=2000)
+                p.wait_for_timeout(200)
+                box = el.bounding_box()
+                if not box:
+                    continue
+                cx = box["x"] + box["width"] / 2
+                cy = box["y"] + box["height"] / 2
+                # РЕАЛЬНЫЙ курсор по координатам центра строки — надёжнее
+                # el.hover(): тот кидает ошибку, если Playwright считает точку
+                # перекрытой (старые сообщения, проскролленные к краю), и «...»
+                # не поднималась. mouse.move перекрытие не проверяет.
                 if attempt > 0:
-                    p.mouse.move(5, 5)             # сброс ховера
-                    p.wait_for_timeout(150)
-                el.hover(timeout=3000)             # НАСТОЯЩИЙ hover
-                p.wait_for_timeout(300)
+                    p.mouse.move(cx, 6)           # сброс ховера
+                    p.wait_for_timeout(120)
+                p.mouse.move(cx, cy)
+                p.wait_for_timeout(400)
                 dots = el.locator('button.new-chat-message__options-button')
                 if dots.count() == 0:
                     dots = el.locator(
                         'xpath=.//button[contains(@class,"options-button")]')
                 if dots.count() == 0:
                     continue
-                dots.last.hover(timeout=1500)
-                dots.last.click(timeout=1800)
+                # Кликаем по КООРДИНАТАМ появившейся «...», а не locator.click:
+                # у проскролленных дублей кнопка display:none до наведения, и
+                # даже force-клик падал «Element is not visible». Наведение
+                # мышью её раскрывает → берём bbox и жмём мышью по центру.
+                dbox = dots.last.bounding_box()
+                if not dbox or dbox["width"] == 0:
+                    # не раскрылась — наведём точнее (правый край строки) и ещё раз
+                    p.mouse.move(box["x"] + box["width"] - 12, cy)
+                    p.wait_for_timeout(350)
+                    dbox = dots.last.bounding_box()
+                if not dbox or dbox["width"] == 0:
+                    continue
+                p.mouse.click(dbox["x"] + dbox["width"] / 2,
+                              dbox["y"] + dbox["height"] / 2)
                 return True
             except PWTimeout:
                 continue
@@ -1630,16 +1652,40 @@ class ZoomWeb:
             log.info("delete: пункт «Удалить» не найден для %r; в меню: %s", text, items)
             p.keyboard.press("Escape")
             return False
-        p.wait_for_timeout(400)
-        try:
-            p.get_by_role("button", name="Удалить", exact=True).last.click(timeout=3000)
-        except PWTimeout:
-            p.keyboard.press("Enter")
-        p.wait_for_timeout(600)
+        # Подтверждающий диалог: у ХОСТА при удалении ЧУЖОГО сообщения кнопка
+        # часто «Удалить для всех», а не «Удалить». Ждём именно ДИАЛОГ (портал/
+        # modal), иначе клик уходил в ещё открытое меню и «удаление» не срабатывало
+        # (confirm=True, но сообщение на месте).
+        confirmed = self._confirm_delete_dialog()
+        p.wait_for_timeout(800)
         gone = self._count_text(text) < cnt
-        log.info("delete %r: было %d, %s", text, cnt,
-                 "удалено" if gone else "НЕ удалилось")
+        log.info("delete %r: было %d, %s (confirm=%s)", text, cnt,
+                 "удалено" if gone else "НЕ удалилось", confirmed)
         return gone
+
+    def _confirm_delete_dialog(self) -> bool:
+        """Дождаться диалога подтверждения удаления и нажать его кнопку
+        «Удалить»/«Удалить для всех»/«Delete». Возвращает True, если кликнули."""
+        p = self.page
+        # Ждём появления кнопки подтверждения ВНУТРИ диалога (не пункта меню).
+        for _ in range(12):                       # до ~3с
+            box = p.evaluate(
+                "() => { const dlg = [...document.querySelectorAll("
+                "'[role=dialog],[class*=modal],[class*=dialog],[class*=confirm]')]"
+                ".filter(d => d.offsetParent);"
+                " for (const d of dlg) {"
+                "  const b = [...d.querySelectorAll('button')].filter(e => e.offsetParent"
+                "   && /^(удалить|delete)/i.test((e.innerText||'').trim()));"
+                "  if (b.length) { const r = b[b.length-1].getBoundingClientRect();"
+                "   if (r.width) return {x: r.x + r.width/2, y: r.y + r.height/2}; } }"
+                " return null; }")
+            if box:
+                p.mouse.click(box["x"], box["y"])
+                return True
+            p.wait_for_timeout(250)
+        # Диалога не дождались — фолбэк на Enter (иногда подтверждает).
+        p.keyboard.press("Enter")
+        return False
 
     # ---- запись (host-контрол) ----
 

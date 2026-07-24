@@ -58,6 +58,10 @@ class BrowserModerator:
         self._cmd_results: dict[str, bool] = {}
         self.recording = False
         self.auth_error = ""                 # почему cookie не подошли
+        # Очередь удаления: одно удаление за ТАКТ цикла (не пачкой) — пачка
+        # гонялась с DOM и флейкала. text → число неудачных попыток.
+        self._del_queue: dict[str, int] = {}
+        self._del_keep: dict[str, int] = {}  # text → сколько оставить (spam=1, мат=0)
         self.video: str | None = None        # имя ролика, играющего в камеру
         # ---- live-debug (без рестартов): выполнять JS/держать панель ----
         self.debug_hold = False
@@ -269,6 +273,8 @@ class BrowserModerator:
             return
         for m in new:
             self._process(web, m, backlog=False)
+        # ОДНО удаление за такт (очередь) — надёжнее пачки.
+        self._run_deletions(web)
         self._gatekeep(web, new)
 
     def _gatekeep(self, web: ZoomWeb, new_msgs: list[dict]) -> None:
@@ -326,6 +332,47 @@ class BrowserModerator:
                     gatekeeper.note(name, "asked", "нет фамилии — впущен условно")
             # leave → ничего не делаем, решает человек вручную
 
+    MAX_DELETE_ATTEMPTS = 6   # столько тактов пытаемся удалить текст, потом сдаёмся
+
+    def _enqueue_delete(self, text: str, keep_last: int) -> None:
+        t = (text or "").strip()
+        if not t:
+            return
+        if t not in self._del_queue:
+            self._del_queue[t] = 0
+            self._del_keep[t] = keep_last
+
+    def _run_deletions(self, web: ZoomWeb) -> None:
+        """ОДНО удаление за такт цикла. Пачка гонялась с DOM (флейк) — здесь
+        сериализуем: берём один текст из очереди, удаляем одно его вхождение,
+        неудачу повторяем в следующих тактах, после MAX сдаёмся."""
+        if not self._del_queue:
+            return
+        text = next(iter(self._del_queue))
+        keep = self._del_keep.get(text, 0)
+        try:
+            remaining = web._count_text(text)
+        except Exception:  # noqa: BLE001
+            remaining = 0
+        if remaining <= keep:
+            self._del_queue.pop(text, None)
+            self._del_keep.pop(text, None)
+            return
+        ok = False
+        try:
+            ok = web.delete_message(None, text)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("удаление из очереди %r: %s", text, exc)
+        if ok:
+            self._del_queue[text] = 0          # успех — продолжим со следующего такта
+        else:
+            self._del_queue[text] += 1
+            if self._del_queue[text] >= self.MAX_DELETE_ATTEMPTS:
+                log.info("удаление %r: сдаюсь после %d тактов (осталось %d)",
+                         text, self._del_queue[text], remaining)
+                self._del_queue.pop(text, None)
+                self._del_keep.pop(text, None)
+
     def _process(self, web: ZoomWeb, m: dict, backlog: bool) -> None:
         msg = ChatMessage(sender=m["sender"], text=m["text"], mid=m["id"])
         res = classify(msg.text, msg, self.profanity, self.spam)
@@ -337,17 +384,13 @@ class BrowserModerator:
         ckey = self._cooldown_key(msg.text)
         if ckey and self._failed_recently(ckey):
             return
-        # Удаляем мат и весь спам. Для повторов — «оставить последнее»
-        # (delete_duplicates), для мата/флуда — само сообщение.
-        action = "flagged"
-        try:
-            if category == "spam" and reason.startswith("повтор"):
-                if web.delete_duplicates(msg.text, keep_last=1) > 0:
-                    action = "deleted"
-            elif web.delete_message(msg.mid, msg.text):
-                action = "deleted"
-        except Exception as exc:  # noqa: BLE001
-            log.warning("удаление не удалось: %s", exc)
+        # Удаляем мат и весь спам — ЧЕРЕЗ ОЧЕРЕДЬ (одно за такт, см.
+        # _run_deletions). Повторы — «оставить последнее» (keep=1), мат/флуд —
+        # убрать все (keep=0). Само удаление идёт в следующих тактах цикла:
+        # надёжнее, чем пачкой прямо здесь.
+        keep = 1 if (category == "spam" and reason.startswith("повтор")) else 0
+        self._enqueue_delete(msg.text, keep)
+        action = "deleted"   # намерение; фактическое удаление — в _run_deletions
         # Предупреждение в чат + мьют нарушителя — один раз на автора (кулдаун),
         # чтобы не флудить самим и не мьютить повторно.
         self._warn_and_mute(web, msg.sender, category)
