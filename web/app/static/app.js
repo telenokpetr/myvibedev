@@ -29,14 +29,47 @@ function setSlot(n) {
   } catch (e) { /* дефолт 2 */ }
   nav.innerHTML = "";
   for (let i = 0; i < count; i++) {
-    const b = document.createElement("button");
+    // Вкладка-блок (не button): внутри ненавязчивая ссылка на митинг слота.
+    const b = document.createElement("div");
     b.className = "tab" + (i === 0 ? " active" : "");
     b.dataset.slot = String(i);
-    b.textContent = "Вебинар " + (i + 1);
+    b.innerHTML =
+      '<span class="tab-title">Мероприятие ' + (i + 1) + "</span>" +
+      '<a class="tab-link" target="_blank" rel="noopener">—</a>';
     b.addEventListener("click", () => setSlot(i));
+    // Клик по ссылке не должен переключать вкладку, только открывать митинг.
+    b.querySelector(".tab-link").addEventListener("click", (e) => e.stopPropagation());
     nav.appendChild(b);
   }
+  refreshTabLinks();
+  setInterval(refreshTabLinks, 5000);
 })();
+
+// Ненавязчиво показать под названием вкладки ссылку на текущий митинг слота
+// (номер конференции; полная ссылка — по клику/в title).
+async function refreshTabLinks() {
+  const tabs = document.querySelectorAll("#webinar-tabs .tab");
+  for (const t of tabs) {
+    const slot = Number(t.dataset.slot);
+    const link = t.querySelector(".tab-link");
+    if (!link) continue;
+    let url = "";
+    try {
+      const s = await (await fetch("/api/bot/session/status?slot=" + slot)).json();
+      url = (s && s.join_url) || "";
+    } catch (e) { /* воркер недоступен */ }
+    if (url) {
+      const m = url.match(/\/j\/(\d+)/) || url.match(/(\d{9,})/);
+      link.textContent = m ? ("№ " + m[1]) : "митинг";
+      link.href = url;
+      link.title = url;
+    } else {
+      link.textContent = "нет митинга";
+      link.removeAttribute("href");
+      link.title = "";
+    }
+  }
+}
 
 const STATUS_LABELS = {
   scheduled: "запланировано",

@@ -28,9 +28,11 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      # Веб-интерфейс управляет БРАУЗЕРНЫМ ботом (bot-browser:9100), а не старым
-      # desktop-воркером. Здесь живут /account/*, /session/*, модерация, запись.
-      BOT_WORKER_URLS: "http://bot-browser:9100"
+      # Веб-интерфейс управляет БРАУЗЕРНЫМИ ботами (два слота — два мероприятия
+      # параллельно). Слот 0 = bot-browser, слот 1 = bot-browser-2. Каждый — свой
+      # аккаунт/профиль (иначе конфликт хоста). Здесь /account/*, /session/*,
+      # модерация, зал ожидания, медиа.
+      BOT_WORKER_URLS: "http://bot-browser:9100,http://bot-browser-2:9100"
     ports:
       - "8000:8000"
     depends_on:
@@ -140,6 +142,37 @@ services:
     # после правок — docker compose restart bot-browser.
     command: uvicorn app.main:app --host 0.0.0.0 --port 9100
 
+  # ВТОРОЙ браузерный бот (слот 1) — точная копия первого, но со СВОИМ профилем,
+  # томами и портами. Нужен для второго мероприятия параллельно. Свой Zoom-аккаунт
+  # заводится так же — ручным входом через noVNC на порту 6081 (см. account.py).
+  # Тот же код (./bot-browser:/app) и образ — бот идентичный первому.
+  bot-browser-2:
+    build: ./bot-browser
+    image: myvibedev-bot-browser
+    restart: unless-stopped
+    env_file: .env
+    init: true
+    shm_size: "1gb"
+    environment:
+      BOT_NAME: "Веб-модератор"
+      WEB_CALLBACK_URL: "http://web:8000"
+      BROWSER_CHANNEL: ""
+      SHOTS_DIR: "/data"
+      RECORDINGS_DIR: "/data/recordings"
+      REC_GEOMETRY: "1280x800"
+    ports:
+      - "9101:9100"   # API второго бота (внутри контейнера порт тот же 9100)
+      - "127.0.0.1:6081:6080"   # noVNC второго бота — экран для ручного входа
+    depends_on:
+      - web
+    volumes:
+      - ./bot-browser:/app                     # тот же код = идентичный бот
+      # Свои cookie второго аккаунта (создай пустой файл, если импорт не нужен).
+      - ./zoom-cookies-2.json:/data/zoom-cookies.json:ro
+      - botshots-2:/data                       # ОТДЕЛЬНЫЙ профиль/данные
+      - browser-recordings-2:/data/recordings
+    command: uvicorn app.main:app --host 0.0.0.0 --port 9100
+
 volumes:
   db-data:
   recordings:
@@ -152,3 +185,5 @@ volumes:
   zoomprofile-2:
   botshots:
   browser-recordings:
+  botshots-2:
+  browser-recordings-2:
