@@ -249,6 +249,89 @@ class ZoomWeb:
 
     # ---- вход в митинг ----
 
+    def start_meeting(self) -> bool:
+        """Начать СВОЮ конференцию из аккаунта бота (личная комната PMI).
+        Идём на домашнюю веб-клиента и жмём «Новая конференция». Бот сразу хост —
+        отдельная конференция под этим аккаунтом (для параллельных мероприятий)."""
+        p = self.page
+        try:
+            p.goto("https://app.zoom.us/wc/home", wait_until="domcontentloaded",
+                   timeout=45000)
+            p.wait_for_timeout(4000)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("start_meeting goto home: %s", exc)
+        self._shot("start_home")
+        before = set(self._ctx.pages)
+        # «Новая конференция» открывает НОВУЮ ВКЛАДКУ с митингом. Кликаем и ЖДЁМ
+        # появления вкладки до ~12с; если не открылась — жмём ещё раз (на слоте 1
+        # один клик иногда не срабатывал и вкладка не появлялась).
+        new_pages: list = []
+        for attempt in range(2):
+            clicked = False
+            for label in ("Новая конференция", "New Meeting", "New meeting",
+                          "Начать конференцию", "Start Meeting"):
+                try:
+                    p.get_by_role("button", name=label, exact=False).first.click(timeout=3500)
+                    log.info("start_meeting: клик «%s» (попытка %d)", label, attempt + 1)
+                    clicked = True
+                    break
+                except PWTimeout:
+                    continue
+                except Exception:  # noqa: BLE001
+                    continue
+            if not clicked:
+                box = p.evaluate(_JS_FIND_TEXT,
+                                 r"новая конференция|new meeting|начать конференцию")
+                if box and not box.get("none"):
+                    p.mouse.click(box["x"], box["y"])
+                    clicked = True
+            # ждём новую вкладку до 12с
+            for _ in range(24):
+                new_pages = [pg for pg in self._ctx.pages if pg not in before]
+                if new_pages:
+                    break
+                p.wait_for_timeout(500)
+            if new_pages:
+                break
+            log.info("start_meeting: вкладка не открылась (попытка %d) — повтор", attempt + 1)
+        if new_pages:
+            self.page = new_pages[-1]
+            p = self.page
+            try:
+                p.bring_to_front()
+            except Exception:  # noqa: BLE001
+                pass
+            log.info("start_meeting: новая вкладка %s", p.url)
+            # закрыть старые вкладки, чтобы не мешали
+            for pg in before:
+                try:
+                    pg.close()
+                except Exception:  # noqa: BLE001
+                    pass
+        p.wait_for_timeout(3000)
+        # Подтверждение «Начать эту конференцию» (если висела другая сессия) +
+        # возможный prejoin.
+        for _ in range(4):
+            u = p.url or ""
+            if "/wc/" in u and "start" in u and "/home" not in u:
+                # уже на странице митинга — пробуем подтвердить старт/вход
+                pass
+            for label in ("Начать эту конференцию", "Начать конференцию",
+                          "Войти", "Join", "Start", "Присоединиться"):
+                try:
+                    p.get_by_role("button", name=label, exact=False).first.click(timeout=2000)
+                    log.info("start_meeting: подтвердил «%s»", label)
+                    break
+                except PWTimeout:
+                    continue
+                except Exception:  # noqa: BLE001
+                    continue
+            p.wait_for_timeout(2500)
+        p.wait_for_timeout(4000)
+        log.info("start_meeting: url=%s clicked=%s", p.url, clicked)
+        u = p.url or ""
+        return "/wc/" in u and "/home" not in u and "/join" not in u
+
     def join(self, url: str) -> bool:
         p = self.page
         url = to_web_client(url)

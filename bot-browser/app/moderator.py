@@ -205,9 +205,13 @@ class BrowserModerator:
                 log.warning("вход отменён: %s", msg)
                 return
             log.info("авторизация ок: %s", msg)
-            if not web.join(self._join_url):
+            # NEW_MEETING — бот СТАРТУЕТ свою конференцию (личную комнату), а не
+            # заходит по ссылке. Для двух параллельных мероприятий из аккаунтов.
+            entered = (web.start_meeting() if self._join_url == "NEW_MEETING"
+                       else web.join(self._join_url))
+            if not entered:
                 self.status = "error"
-                log.warning("вход не подтверждён")
+                log.warning("вход/старт не подтверждён")
                 return
             # Зал ожидания раньше засчитывался за вход (URL уже /wc/…) —
             # теперь ждём впуска и только потом доводим вход (аудио/камера/чат).

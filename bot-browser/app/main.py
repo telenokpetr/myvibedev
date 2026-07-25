@@ -44,6 +44,16 @@ def join(req: JoinRequest):
     return moderator.state()
 
 
+@app.post("/session/start")
+def start_own():
+    """Начать СВОЮ конференцию из аккаунта бота (личная комната). Бот — хост."""
+    try:
+        moderator.join("NEW_MEETING")
+    except RuntimeError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=409)
+    return moderator.state()
+
+
 @app.post("/session/leave")
 def leave():
     moderator.leave()
