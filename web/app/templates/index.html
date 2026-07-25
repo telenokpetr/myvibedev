@@ -180,14 +180,17 @@
         <h2>Живой просмотр</h2>
         <span class="pill" id="bot-state">—</span>
       </div>
-      <p class="hint">Что видит и слышит бот прямо сейчас (экран + звук конференции, ~1&nbsp;сек задержки).</p>
+      <p class="hint">Живой экран бота этого мероприятия (через noVNC, только просмотр,
+         без звука). Показывает то, что видит бот в конференции.</p>
       <div class="preview-wrap">
-        <canvas id="preview-canvas" width="800" height="450"></canvas>
+        <iframe id="preview-frame" title="Экран бота"
+                style="width:100%;height:420px;border:0;border-radius:8px;display:none;background:#000"></iframe>
         <div class="preview-overlay" id="preview-overlay">просмотр выключен</div>
       </div>
       <div class="preview-controls">
         <button id="preview-toggle">▶ Смотреть</button>
-        <button id="preview-sound" class="ghost" disabled>🔇 Звук</button>
+        <a id="preview-open" class="ghost" target="_blank" rel="noopener"
+           style="display:none">↗ В отдельном окне</a>
       </div>
 
       <div class="control-row">

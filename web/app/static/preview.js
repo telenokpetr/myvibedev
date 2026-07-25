@@ -11,67 +11,53 @@ const BOT_LABELS = {
   unavailable: "воркер недоступен",
 };
 
-function previewWsUrl() {
-  return (location.protocol === "https:" ? "wss" : "ws") +
-    "://" + location.host + "/api/preview?slot=" + window.currentSlot;
-}
-
-const canvas = document.getElementById("preview-canvas");
+// Живой экран бота — через noVNC (уже запущен в контейнере бота: слот 0 → 6080,
+// слот 1 → 6081). Раньше тут был jsmpeg-поток /api/preview от desktop-воркера,
+// но у браузерного бота такого потока нет — поэтому мониторинг был пуст.
+const frame = document.getElementById("preview-frame");
 const overlay = document.getElementById("preview-overlay");
 const toggleBtn = document.getElementById("preview-toggle");
-const soundBtn = document.getElementById("preview-sound");
+const openLink = document.getElementById("preview-open");
 const logEl = document.getElementById("preview-log");
 const statePill = document.getElementById("bot-state");
 
-let player = null;
-let soundOn = false;
+let previewOn = false;
+
+function novncUrl() {
+  const port = 6080 + (window.currentSlot || 0);
+  return "http://" + location.hostname + ":" + port +
+    "/vnc.html?autoconnect=1&resize=scale&view_only=1&reconnect=1";
+}
 
 function startPreview() {
-  overlay.style.display = "flex";
-  overlay.textContent = "подключение…";
-  player = new JSMpeg.Player(previewWsUrl(), {
-    canvas: canvas,
-    audio: true,
-    autoplay: true,
-    videoBufferSize: 1024 * 1024,
-    audioBufferSize: 256 * 1024,
-    onVideoDecode: () => { overlay.style.display = "none"; },
-  });
-  player.volume = 0; // старт без звука, включается по клику
+  const url = novncUrl();
+  frame.src = url;
+  frame.style.display = "";
+  overlay.style.display = "none";
+  openLink.href = url;
+  openLink.style.display = "";
   toggleBtn.textContent = "⏸ Стоп";
-  soundBtn.disabled = false;
-  soundOn = false;
-  updateSoundBtn();
+  previewOn = true;
 }
 
 function stopPreview() {
-  if (player) { try { player.destroy(); } catch (e) {} player = null; }
+  frame.src = "about:blank";
+  frame.style.display = "none";
   overlay.style.display = "flex";
   overlay.textContent = "просмотр выключен";
+  openLink.style.display = "none";
   toggleBtn.textContent = "▶ Смотреть";
-  soundBtn.disabled = true;
+  previewOn = false;
 }
 
 toggleBtn.addEventListener("click", () => {
-  player ? stopPreview() : startPreview();
+  previewOn ? stopPreview() : startPreview();
 });
 
-soundBtn.addEventListener("click", () => {
-  if (!player) return;
-  soundOn = !soundOn;
-  player.volume = soundOn ? 1 : 0;
-  // разблокировать WebAudio (браузеры глушат автоплей до жеста пользователя)
-  try {
-    const ctx = player.audioOut && player.audioOut.context;
-    if (ctx && ctx.state === "suspended") ctx.resume();
-  } catch (e) {}
-  updateSoundBtn();
+// Сменили вкладку мероприятия — если смотрим, показать экран бота нового слота.
+window.addEventListener("slotchange", () => {
+  if (previewOn) startPreview();
 });
-
-function updateSoundBtn() {
-  soundBtn.textContent = soundOn ? "🔊 Звук" : "🔇 Звук";
-  soundBtn.classList.toggle("ghost", !soundOn);
-}
 
 // ---- Запись и модерация ----
 const recTarget = document.getElementById("rec-target");
@@ -151,9 +137,9 @@ async function pollBot() {
   }
 }
 
-// Смена вебинара: гасим просмотр (это другой воркер) и перечитываем статус.
+// Смена мероприятия: сбрасываем кнопку мьюта и перечитываем статус.
+// (Экран превью переключает отдельный slotchange-обработчик выше.)
 window.addEventListener("slotchange", () => {
-  if (player) stopPreview();
   muteAllBtn.textContent = "🔇 Отключить звук всем";
   pollBot();
 });
