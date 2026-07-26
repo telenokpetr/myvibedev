@@ -199,6 +199,15 @@ class WorkerClient:
             log.warning("video_delete failed: %s", exc)
             return None
 
+    # ---- звук: VU бота ----
+    def audio_bot_level(self) -> dict | None:
+        try:
+            r = httpx.get(f"{self.base}/audio/bot-level", timeout=8)
+            r.raise_for_status()
+            return r.json()
+        except Exception:  # noqa: BLE001
+            return None
+
     # ---- зал ожидания (впуск по списку) ----
     def waitroom_status(self) -> dict | None:
         try:

@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+import subprocess
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(name)s: %(message)s")
@@ -358,6 +359,59 @@ def video_status():
         return {"in_meeting": False, "playing": None}
     st = moderator.debug_eval("() => window.__vcam ? window.__vcam.state() : null")
     return {"in_meeting": True, "playing": moderator.video, "page": st}
+
+
+# ---- Звук: VU бота + стрим звука участников для мониторинга ----
+
+@app.get("/audio/bot-level")
+def audio_bot_level():
+    """Уровень звука, который ОТДАЁТ бот (музыка/ролик), 0..100 — для VU."""
+    if not moderator.enabled:
+        return {"level": 0, "in_meeting": False}
+    return {"level": int(moderator.call("vcam_level") or 0), "in_meeting": True}
+
+
+def _pulse_monitor() -> str:
+    """Источник-монитор PulseAudio, куда Chromium играет звук КОНФЕРЕНЦИИ
+    (других участников). Свой звук бота сюда НЕ попадает (он в WebAudio→микрофон)."""
+    try:
+        sink = subprocess.run(["pactl", "get-default-sink"],
+                              capture_output=True, text=True, timeout=5).stdout.strip()
+        if sink:
+            return sink + ".monitor"
+    except Exception:  # noqa: BLE001
+        pass
+    return "@DEFAULT_MONITOR@"
+
+
+@app.get("/audio/meeting")
+def audio_meeting():
+    """Живой звук конференции (участники) в mp3 — чтобы СЛЫШАТЬ в мониторинге.
+    ffmpeg снимает PulseAudio-монитор бота и стримит. Клиент включает по желанию."""
+    mon = _pulse_monitor()
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error",
+           "-f", "pulse", "-i", mon, "-ac", "1", "-ar", "44100",
+           "-f", "mp3", "-b:a", "64k", "-"]
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"ffmpeg не запустился: {exc}"}, status_code=500)
+
+    def gen():
+        try:
+            while True:
+                chunk = proc.stdout.read(4096)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            try:
+                proc.kill()
+            except Exception:  # noqa: BLE001
+                pass
+
+    return StreamingResponse(gen(), media_type="audio/mpeg",
+                             headers={"Cache-Control": "no-store"})
 
 
 # ---- Модерация зала ожидания (впуск по списку, см. waitroom.py) ----

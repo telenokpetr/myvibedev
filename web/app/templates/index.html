@@ -193,6 +193,19 @@
            style="display:none">↗ В отдельном окне</a>
       </div>
 
+      <div class="control-row" style="gap:12px;align-items:center;flex-wrap:wrap">
+        <span class="ctl-label">🎤 Звук бота:</span>
+        <div class="vu" title="Уровень звука, который отдаёт бот (музыка/ролик)">
+          <div id="vu-bot" class="vu-fill"></div>
+        </div>
+        <span class="ctl-label">👥 Участники:</span>
+        <div class="vu" title="Уровень звука участников (при включённом прослушивании)">
+          <div id="vu-part" class="vu-fill"></div>
+        </div>
+        <button id="audio-listen" class="ghost">🔊 Слушать участников</button>
+        <audio id="meeting-audio" style="display:none"></audio>
+      </div>
+
       <div class="control-row">
         <span class="ctl-label">Запись:</span>
         <select id="rec-target">
@@ -368,6 +381,7 @@
   <script src="/static/music.js"></script>
   <script src="/static/video.js"></script>
   <script src="/static/waitroom.js"></script>
+  <script src="/static/collapse.js"></script>
   <script src="/static/account.js"></script>
 </body>
 </html>

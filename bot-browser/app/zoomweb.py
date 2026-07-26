@@ -1562,6 +1562,14 @@ class ZoomWeb:
         return self.page.evaluate(
             "() => window.__vcam ? window.__vcam.state() : {error: 'vcam не установлен'}")
 
+    def vcam_level(self):
+        """Уровень звука бота (0..100) для VU-индикатора."""
+        try:
+            return int(self.page.evaluate(
+                "() => window.__vcam ? window.__vcam.level() : 0") or 0)
+        except Exception:  # noqa: BLE001
+            return 0
+
     def debug_dump_participants(self) -> None:
         """DEBUG: открыть панель участников и вывести в лог реальную структуру —
         сработал ли клик по кнопке панели и КАКИЕ элементы реально являются

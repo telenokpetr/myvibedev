@@ -238,6 +238,11 @@ _INIT_JS = r"""
       S.gain = S.ac.createGain();
       S.gain.gain.value = 1;
       S.gain.connect(S.dest);
+      // Анализатор на выходе микшера — для VU-индикатора «звук бота идёт».
+      S.analyser = S.ac.createAnalyser();
+      S.analyser.fftSize = 256;
+      S.gain.connect(S.analyser);
+      S._buf = new Uint8Array(S.analyser.fftSize);
       try { S.ac.createMediaElementSource(S.video).connect(S.gain); }
       catch (e) { S.err = String(e); }
       // Тихий осциллятор держит граф живым: без источника dest отдаёт
@@ -266,6 +271,19 @@ _INIT_JS = r"""
     resume() { return S.video ? S.video.play().then(() => true).catch(e => String(e)) : false; },
     volume(v) { if (S.gain) S.gain.gain.value = Math.max(0, Math.min(1, v / 100)); return true; },
     caption(t) { S.caption = t; return true; },
+    // Уровень звука бота (0..100) из анализатора — для VU-индикатора. Считаем
+    // RMS по временной форме сигнала на выходе микшера (музыка/ролик).
+    level() {
+      if (!S.analyser || !S._buf) return 0;
+      S.analyser.getByteTimeDomainData(S._buf);
+      let sum = 0;
+      for (let i = 0; i < S._buf.length; i++) {
+        const x = (S._buf[i] - 128) / 128;
+        sum += x * x;
+      }
+      const rms = Math.sqrt(sum / S._buf.length);
+      return Math.min(100, Math.round(rms * 300));   // масштаб под шкалу 0..100
+    },
     state() {
       const v = S.video;
       return { playing: S.playing, ready: !!S.stream,

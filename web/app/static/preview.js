@@ -57,7 +57,72 @@ toggleBtn.addEventListener("click", () => {
 // Сменили вкладку мероприятия — если смотрим, показать экран бота нового слота.
 window.addEventListener("slotchange", () => {
   if (previewOn) startPreview();
+  stopListen();          // звук участников — другого воркера, гасим
 });
+
+// ---- VU-индикаторы звука: бот (WebAudio-уровень) + участники (по стриму) ----
+const vuBot = document.getElementById("vu-bot");
+const vuPart = document.getElementById("vu-part");
+const listenBtn = document.getElementById("audio-listen");
+const meetingAudio = document.getElementById("meeting-audio");
+
+// Уровень звука БОТА — опрос лёгкого эндпоинта (0..100).
+async function pollBotLevel() {
+  try {
+    const j = await (await fetch("/api/bot/audio/bot-level")).json();
+    vuBot.style.width = (j && j.in_meeting ? (j.level || 0) : 0) + "%";
+  } catch (e) {
+    vuBot.style.width = "0%";
+  }
+}
+setInterval(pollBotLevel, 400);
+
+// Звук УЧАСТНИКОВ — по кнопке: играем mp3-стрим + считаем его уровень локально.
+let listenOn = false, actx = null, analyser = null, rafId = null, srcNode = null;
+
+function stopListen() {
+  listenOn = false;
+  if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+  try { meetingAudio.pause(); } catch (e) {}
+  meetingAudio.removeAttribute("src");
+  try { meetingAudio.load(); } catch (e) {}
+  vuPart.style.width = "0%";
+  listenBtn.textContent = "🔊 Слушать участников";
+  listenBtn.classList.add("ghost");
+}
+
+function startListen() {
+  meetingAudio.src = "/api/bot/audio/meeting?slot=" + window.currentSlot + "&t=" + Date.now();
+  meetingAudio.play().catch(() => {});
+  listenOn = true;
+  listenBtn.textContent = "🔇 Не слушать";
+  listenBtn.classList.remove("ghost");
+  // Анализатор уровня на самом аудио-элементе — VU участников.
+  try {
+    if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+    if (actx.state === "suspended") actx.resume();
+    if (!srcNode) {
+      srcNode = actx.createMediaElementSource(meetingAudio);
+      analyser = actx.createAnalyser();
+      analyser.fftSize = 256;
+      srcNode.connect(analyser);
+      srcNode.connect(actx.destination);   // чтобы было слышно
+    }
+    const buf = new Uint8Array(analyser.fftSize);
+    const tick = () => {
+      if (!listenOn) return;
+      analyser.getByteTimeDomainData(buf);
+      let s = 0;
+      for (let i = 0; i < buf.length; i++) { const x = (buf[i] - 128) / 128; s += x * x; }
+      const lvl = Math.min(100, Math.round(Math.sqrt(s / buf.length) * 300));
+      vuPart.style.width = lvl + "%";
+      rafId = requestAnimationFrame(tick);
+    };
+    tick();
+  } catch (e) { /* VU участников недоступен — звук всё равно играет */ }
+}
+
+listenBtn.addEventListener("click", () => { listenOn ? stopListen() : startListen(); });
 
 // ---- Запись и модерация ----
 const recTarget = document.getElementById("rec-target");

@@ -2,9 +2,10 @@ import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import httpx
 import websockets
 from fastapi import Body, FastAPI, File, Request, UploadFile, WebSocket
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select, text
@@ -211,6 +212,35 @@ def bot_music_action(action: str, slot: int = 0):
         return JSONResponse({"error": "неизвестное действие"}, status_code=400)
     w = _worker(slot)
     return (w.music_action(action) if w else None) or UNAVAILABLE
+
+
+# ---- Звук: VU бота + стрим звука участников ----
+@app.get("/api/bot/audio/bot-level")
+def bot_audio_bot_level(slot: int = 0):
+    w = _worker(slot)
+    return (w.audio_bot_level() if w else None) or UNAVAILABLE
+
+
+@app.get("/api/bot/audio/meeting")
+async def bot_audio_meeting(slot: int = 0):
+    """Прокси живого mp3-стрима звука конференции нужного воркера."""
+    w = bot_client.get_worker(slot)
+    if not w:
+        return JSONResponse(UNAVAILABLE, status_code=502)
+    client = httpx.AsyncClient(timeout=None)
+    req = client.build_request("GET", f"{w.base}/audio/meeting")
+    r = await client.send(req, stream=True)
+
+    async def gen():
+        try:
+            async for chunk in r.aiter_bytes():
+                yield chunk
+        finally:
+            await r.aclose()
+            await client.aclose()
+
+    return StreamingResponse(gen(), media_type="audio/mpeg",
+                             headers={"Cache-Control": "no-store"})
 
 
 # ---- Зал ожидания: впуск по списку ----
