@@ -55,6 +55,32 @@ _JS_FIND_TEXT = r"""
 }
 """
 
+# Найти видимый КЛИКАБЕЛЬНЫЙ элемент по aria-label / title / тексту и вернуть
+# центр. В отличие от _JS_FIND_TEXT (только innerText), ловит иконочные кнопки
+# без текста — например эмодзи в панели реакций (у них подпись в aria-label).
+# Если не нашли — возвращаем список подписей видимых кнопок (для калибровки).
+_JS_FIND_CLICKABLE = r"""
+(pattern) => {
+  const rx = new RegExp(pattern, 'i');
+  const label = e => (e.getAttribute('aria-label') || e.getAttribute('title') ||
+                      e.innerText || '').trim();
+  const nodes = [...document.querySelectorAll(
+    'button,[role=button],[role=menuitem],[role=menuitemradio],' +
+    '[class*="emoji" i],[class*="reaction" i]')].filter(e => e.offsetParent);
+  const hits = nodes
+    .map(e => ({ e, l: label(e), r: e.getBoundingClientRect() }))
+    .filter(o => o.r.width > 0 && o.r.height > 0 && rx.test(o.l))
+    .sort((a, b) => a.l.length - b.l.length);   // самый короткий = сам пункт
+  if (!hits.length) {
+    return { none: true,
+             labels: [...new Set(nodes.map(label).filter(Boolean))].slice(0, 40) };
+  }
+  const o = hits[0];
+  return { x: o.r.x + o.r.width / 2, y: o.r.y + o.r.height / 2,
+           label: o.l.slice(0, 40) };
+}
+"""
+
 # Закрыть лишние уведомления Zoom. Кнопки-подтверждения по тексту + крестики
 # инфо-баннеров. Явно НЕ трогаем чат/участников/митинг/выход, чтобы не сломать.
 _JS_DISMISS = r"""
@@ -1075,41 +1101,67 @@ class ZoomWeb:
         log.info("send_to_waiting: %r возвращён в зал", name)
         return True
 
+    # Подписи эмодзи ищем в aria-label/title (EN+RU) — там, где у Zoom-web живут
+    # названия реакций. Списки расширяются по дампу панели в логах (см. ниже).
     _REACTIONS = {
-        "wave": r"waving|wave|привет|помахать|рука|hand",
-        "like": r"thumbs.?up|like|нрав|палец вверх|👍",
-        "clap": r"clap|аплод|хлоп|👏",
+        "wave": r"wav|hand|привет|помах|рука|ладон",
+        "like": r"thumbs.?up|\blike\b|big.?thumb|нрав|палец вверх|большой палец|👍",
+        "clap": r"clap|applaus|аплод|хлоп|ладош|👏",
         "heart": r"heart|love|сердц|любов|❤",
-        "joy": r"joy|laugh|смех|ха-ха|😂",
-        "tada": r"tada|celebrat|праздн|🎉",
+        "joy": r"joy|laugh|smil|смех|смеш|ха-?ха|😂",
+        "tada": r"tada|celebrat|party|праздн|салют|конфетти|🎉",
     }
+    # Кнопка открытия панели реакций в тулбаре.
+    _RX_REACT_BTN = r"^reactions?$|^react$|^реакции?$|реакц"
+
+    def _open_reactions_panel(self) -> bool:
+        """Открыть панель реакций из тулбара. Возвращает True, если кликнули."""
+        p = self.page
+        # 1) по роли/имени (в ru-локали кнопка «Реакции»)
+        try:
+            p.get_by_role("button", name=re.compile(self._RX_REACT_BTN, re.I)) \
+                .first.click(timeout=2500)
+            return True
+        except Exception:  # noqa: BLE001
+            pass
+        # 2) по aria-label
+        try:
+            btn = p.locator('button[aria-label*="реакц" i], button[aria-label*="react" i]').first
+            if btn.count():
+                btn.click(timeout=2500)
+                return True
+        except Exception:  # noqa: BLE001
+            pass
+        # 3) по координатам (aria-label/title/text)
+        box = p.evaluate(_JS_FIND_CLICKABLE, self._RX_REACT_BTN)
+        if box and not box.get("none"):
+            p.mouse.click(box["x"], box["y"])
+            return True
+        log.info("reaction: кнопка «Реакции» не найдена; кнопки тулбара: %s",
+                 (box or {}).get("labels"))
+        return False
 
     def send_reaction(self, kind: str = "clap") -> bool:
-        """Отправить реакцию Zoom (эмодзи из панели «React»). Реальные клики —
-        синтетику Zoom тут игнорирует. Тулбар предварительно «будим»."""
+        """Отправить реакцию Zoom (эмодзи из панели «Реакции»).
+
+        Эмодзи ищем по aria-label (у иконок нет текста — старый поиск по
+        innerText их не находил). Если эмодзи не найден — пишем в лог подписи
+        всех кнопок панели, чтобы выверить шаблон на живом тесте."""
         p = self.page
         self._reveal_toolbar()
-        try:
-            p.get_by_role("button", name=re.compile(r"^react$|реакц", re.I)).first.click(timeout=3000)
-        except Exception:  # noqa: BLE001
-            box = p.evaluate(_JS_FIND_TEXT, r"^react$|^реакции?$")
-            if not box or box.get("none"):
-                log.info("reaction: кнопка React не найдена")
-                return False
-            p.mouse.click(box["x"], box["y"])
+        if not self._open_reactions_panel():
+            return False
         p.wait_for_timeout(900)
         rx = self._REACTIONS.get(kind, self._REACTIONS["clap"])
-        box = p.evaluate(_JS_FIND_TEXT, rx)
+        box = p.evaluate(_JS_FIND_CLICKABLE, rx)
         if not box or box.get("none"):
-            # фолбэк: любой эмодзи-кнопки в панели по aria-label
-            box = p.evaluate(_JS_FIND_TEXT, r"clap|thumbs|heart|joy|tada|wave|реакц")
-        if not box or box.get("none"):
+            log.info("reaction: эмодзи %r не найден; кнопки панели реакций: %s",
+                     kind, (box or {}).get("labels"))
             p.keyboard.press("Escape")
-            log.info("reaction: эмодзи %r не найден", kind)
             return False
         p.mouse.click(box["x"], box["y"])
         p.wait_for_timeout(400)
-        log.info("reaction: отправлена %r", kind)
+        log.info("reaction: отправлена %r (по подписи «%s»)", kind, box.get("label"))
         return True
 
     def dismiss_popups(self) -> int:
