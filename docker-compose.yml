@@ -45,61 +45,6 @@ services:
       - screenshots:/data/screenshots
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
-  bot-worker:
-    build: ./bot-worker
-    image: myvibedev-bot-worker
-    restart: unless-stopped
-    env_file: .env
-    # tini как pid1 — корректно «хоронит» дочерние процессы Zoom (zombie reaping)
-    init: true
-    # Zoom-клиенту нужно больше /dev/shm, иначе падает рендер
-    shm_size: "1gb"
-    environment:
-      SCREEN_GEOMETRY: "1920x1080x24"
-      ZOOM_BOT_NAME: "Модератор IPDC @telenokpetr"
-      RECORDINGS_DIR: "/data/recordings"
-      SCREENSHOTS_DIR: "/data/screenshots"
-      WEB_CALLBACK_URL: "http://web:8000"
-      # tesseract: paddle-инференс каждые 2с съедал CPU, Zoom терял соединение
-      # и вылетал из митинга; paddle остаётся опцией (CHAT_READER=paddle)
-      CHAT_READER: "tesseract"
-    ports:
-      - "9000:9000"   # управляющий API bot-worker (для тестов/отладки)
-    depends_on:
-      - web
-    volumes:
-      - recordings:/data/recordings
-      - screenshots:/data/screenshots
-      - music:/data/music
-      # Профиль Zoom (логин, «Stay signed in») — чтобы вход переживал пересоздание
-      # контейнера и не требовал OTP каждый раз.
-      - zoomprofile:/home/zoom
-
-  # Второй воркер — для модерации второго вебинара параллельно (свой Zoom-клиент,
-  # аккаунт, дисплей, аудио). Тот же образ, отдельные volume.
-  bot-worker-2:
-    image: myvibedev-bot-worker
-    restart: unless-stopped
-    env_file: .env
-    init: true
-    shm_size: "1gb"
-    environment:
-      SCREEN_GEOMETRY: "1920x1080x24"
-      ZOOM_BOT_NAME: "Модератор IPDC @telenokpetr"
-      RECORDINGS_DIR: "/data/recordings"
-      SCREENSHOTS_DIR: "/data/screenshots"
-      WEB_CALLBACK_URL: "http://web:8000"
-      CHAT_READER: "tesseract"
-    ports:
-      - "9001:9000"
-    depends_on:
-      - web
-    volumes:
-      - recordings-2:/data/recordings
-      - screenshots-2:/data/screenshots
-      - music-2:/data/music
-      - zoomprofile-2:/home/zoom
-
   # Браузерный бот: Zoom web-клиент через Playwright (headful под Xvfb).
   # Один участник делает и модерацию чата (DOM), и музыку (fake-mic, в планах).
   # Заменяет desktop-воркеров с их хрупким OCR/GUI — см. docs/RELIABILITY-PLAN.
@@ -175,14 +120,7 @@ services:
 
 volumes:
   db-data:
-  recordings:
-  screenshots:
-  music:
-  zoomprofile:
-  recordings-2:
-  screenshots-2:
-  music-2:
-  zoomprofile-2:
+  screenshots:            # используется web
   botshots:
   browser-recordings:
   botshots-2:
