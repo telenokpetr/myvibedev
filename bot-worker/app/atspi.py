@@ -240,3 +240,23 @@ def meeting_frame() -> "_Node | None":
     """Окно конференции — эвристически последнее окно Zoom (как в activate_meeting_window)."""
     frames = zoom_frames()
     return frames[-1] if frames else None
+
+
+# ------------------------------------------------------ калибровка (дамп дерева) ---
+
+def _dump_node(node, depth: int, max_depth: int) -> dict:
+    d: dict = {"name": node.name, "role": node.role}
+    if depth < max_depth:
+        kids = [_dump_node(c, depth + 1, max_depth) for c in (node.children or [])]
+        if kids:
+            d["children"] = kids
+    return d
+
+
+def dump_tree(max_depth: int = 14) -> list[dict]:
+    """Снимок дерева доступности окон Zoom (name/role) — для калибровки LABELS.
+
+    Дёргается на живом митинге через GET /atspi/tree: по фактическим подписям
+    кнопок/пунктов меню правятся списки в LABELS без изменения логики.
+    """
+    return [_dump_node(frame, 0, max_depth) for frame in zoom_frames()]

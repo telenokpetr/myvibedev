@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
-from app import gui
+from app import atspi, gui
 from app.chatreader import ChatMessage
 from app.config import config
 from app.moderation import moderator
@@ -171,6 +171,15 @@ async def preview_ws(ws: WebSocket):
         pass
     finally:
         await preview.remove(ws)
+
+
+@app.get("/atspi/tree")
+def atspi_tree(max_depth: int = 14):
+    """Дамп дерева доступности окон Zoom — для калибровки atspi.LABELS на живом
+    митинге (по фактическим подписям кнопок/меню)."""
+    if not atspi.available():
+        return JSONResponse({"error": "pyatspi недоступен"}, status_code=503)
+    return {"frames": atspi.dump_tree(max_depth=max_depth)}
 
 
 @app.get("/recordings")

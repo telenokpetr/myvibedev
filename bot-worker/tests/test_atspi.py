@@ -116,3 +116,22 @@ class TestClickHover:
         assert atspi.hover(FakeNode("row", center=(10, 20))) is True
         assert calls[0] == ("mousemove", "10", "20")
         assert atspi.hover(FakeNode("row", center=None)) is False
+
+
+class TestDumpTree:
+    def test_dumps_names_roles_and_nesting(self, monkeypatch):
+        frame = FakeNode("Zoom Meeting", "frame", children=[
+            FakeNode("Participants", "push button"),
+            FakeNode("panel", "panel", children=[FakeNode("Mute All", "push button")]),
+        ])
+        monkeypatch.setattr(atspi, "zoom_frames", lambda: [frame])
+        dump = atspi.dump_tree()
+        assert dump[0]["name"] == "Zoom Meeting"
+        assert dump[0]["children"][0] == {"name": "Participants", "role": "push button"}
+        assert dump[0]["children"][1]["children"][0]["name"] == "Mute All"
+
+    def test_respects_max_depth(self, monkeypatch):
+        frame = FakeNode("root", "frame", children=[FakeNode("child", "label")])
+        monkeypatch.setattr(atspi, "zoom_frames", lambda: [frame])
+        dump = atspi.dump_tree(max_depth=0)
+        assert "children" not in dump[0]  # глубже корня не спускаемся
