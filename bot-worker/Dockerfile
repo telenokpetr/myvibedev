@@ -4,7 +4,10 @@ ENV DEBIAN_FRONTEND=noninteractive \
     DISPLAY=:99 \
     PYTHONUNBUFFERED=1 \
     HOME=/home/zoom \
-    XDG_RUNTIME_DIR=/tmp/runtime-zoom
+    XDG_RUNTIME_DIR=/tmp/runtime-zoom \
+    # Включаем дерево доступности у Qt-приложений (Zoom) — иначе AT-SPI пусто.
+    QT_ACCESSIBILITY=1 \
+    QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1
 
 # Виртуальный дисплей, оконный менеджер, управление окнами/вводом,
 # захват экрана и звука, OCR (этап 6), звуковая подсистема, Python.
@@ -19,6 +22,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ffmpeg \
         tesseract-ocr \
         tesseract-ocr-rus \
+        at-spi2-core \
+        python3-pyatspi \
+        gir1.2-atspi-2.0 \
+        python3-gi \
         pulseaudio \
         pulseaudio-utils \
         dbus-x11 \

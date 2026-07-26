@@ -17,6 +17,9 @@ done
 echo "[entrypoint] запускаю dbus"
 eval "$(dbus-launch --sh-syntax)" || true
 
+echo "[entrypoint] шина доступности AT-SPI (для управления Zoom через дерево доступности)"
+/usr/libexec/at-spi-bus-launcher --launch-immediately >/dev/null 2>&1 &
+
 echo "[entrypoint] оконный менеджер openbox"
 openbox &
 
