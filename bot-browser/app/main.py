@@ -361,6 +361,37 @@ def video_status():
     return {"in_meeting": True, "playing": moderator.video, "page": st}
 
 
+# ---- Реакции + приветствия ----
+
+class ReactionRequest(BaseModel):
+    kind: str = "clap"
+
+
+@app.post("/reaction")
+def reaction(req: ReactionRequest):
+    """Отправить реакцию Zoom (clap/like/heart/wave/joy/tada)."""
+    if not moderator.enabled:
+        return JSONResponse({"error": "бот не в конференции"}, status_code=409)
+    moderator.command("reaction", req.kind)
+    return {"queued": True, "kind": req.kind}
+
+
+class GreetRequest(BaseModel):
+    on: bool = True
+
+
+@app.get("/greet")
+def greet_status():
+    return {"enabled": moderator.greet_enabled}
+
+
+@app.post("/greet")
+def greet_set(req: GreetRequest):
+    """Вкл/выкл автоприветствие в ответ."""
+    moderator.greet_enabled = bool(req.on)
+    return {"enabled": moderator.greet_enabled}
+
+
 # ---- Звук: VU бота + стрим звука участников для мониторинга ----
 
 @app.get("/audio/bot-level")

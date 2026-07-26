@@ -199,6 +199,28 @@ class WorkerClient:
             log.warning("video_delete failed: %s", exc)
             return None
 
+    # ---- реакции / приветствия ----
+    def reaction(self, kind: str) -> dict | None:
+        try:
+            r = httpx.post(f"{self.base}/reaction", json={"kind": kind}, timeout=15)
+            return r.json()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("reaction failed: %s", exc)
+            return None
+
+    def greet_status(self) -> dict | None:
+        try:
+            return httpx.get(f"{self.base}/greet", timeout=8).json()
+        except Exception:  # noqa: BLE001
+            return None
+
+    def greet_set(self, on: bool) -> dict | None:
+        try:
+            return httpx.post(f"{self.base}/greet", json={"on": on}, timeout=8).json()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("greet_set failed: %s", exc)
+            return None
+
     # ---- звук: VU бота ----
     def audio_bot_level(self) -> dict | None:
         try:

@@ -47,6 +47,16 @@ def normalize(text: str) -> str:
     return strip_delims(text).translate(_LEET)
 
 
+# Приветствия — бот здоровается в ответ (см. moderator).
+_GREETING_RX = re.compile(
+    r"(?:^|\W)(привет\w*|здравствуй\w*|здрасьте|доброе утро|добрый день|"
+    r"добрый вечер|добрый|хай\b|hello\b|hi\b|hey\b|салют|приветствую)", re.I)
+
+
+def is_greeting(text: str) -> bool:
+    return bool(_GREETING_RX.search(text or ""))
+
+
 class ProfanityFilter:
     def __init__(self, roots: list[str] | None = None) -> None:
         roots = roots or PROFANITY_ROOTS

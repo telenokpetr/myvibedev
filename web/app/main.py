@@ -214,6 +214,26 @@ def bot_music_action(action: str, slot: int = 0):
     return (w.music_action(action) if w else None) or UNAVAILABLE
 
 
+# ---- Реакции / приветствия ----
+@app.post("/api/bot/reaction")
+def bot_reaction(payload: dict = Body(...), slot: int = 0):
+    kind = (payload.get("kind") or "clap").strip()
+    w = _worker(slot)
+    return (w.reaction(kind) if w else None) or UNAVAILABLE
+
+
+@app.get("/api/bot/greet")
+def bot_greet_status(slot: int = 0):
+    w = _worker(slot)
+    return (w.greet_status() if w else None) or UNAVAILABLE
+
+
+@app.post("/api/bot/greet")
+def bot_greet_set(payload: dict = Body(...), slot: int = 0):
+    w = _worker(slot)
+    return (w.greet_set(bool(payload.get("on"))) if w else None) or UNAVAILABLE
+
+
 # ---- Звук: VU бота + стрим звука участников ----
 @app.get("/api/bot/audio/bot-level")
 def bot_audio_bot_level(slot: int = 0):

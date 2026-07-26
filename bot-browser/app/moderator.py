@@ -59,6 +59,8 @@ class BrowserModerator:
         self.recording = False
         self.auth_error = ""                 # почему cookie не подошли
         self.audio_level = 0                 # уровень звука бота (0..100) для VU
+        self.greet_enabled = True            # здороваться в ответ
+        self._greeted: dict[str, float] = {}  # автор → время последнего приветствия
         # Очередь удаления: одно удаление за ТАКТ цикла (не пачкой) — пачка
         # гонялась с DOM и флейкала. text → число неудачных попыток.
         self._del_queue: dict[str, int] = {}
@@ -153,6 +155,8 @@ class BrowserModerator:
                     web.vcam_command(name.split("_")[1])
                 elif name == "video_volume":
                     web.vcam_command("volume", float(arg or 100))
+                elif name == "reaction":
+                    web.send_reaction(arg or "clap")
                 elif name == "dump_participants":
                     web.debug_dump_participants()
                     # НЕ возвращаем чат сразу — если стоит пауза, панель
@@ -293,7 +297,36 @@ class BrowserModerator:
             self._process(web, m, backlog=False)
         # ОДНО удаление за такт (очередь) — надёжнее пачки.
         self._run_deletions(web)
+        self._greet(web, new)
         self._gatekeep(web, new)
+
+    GREET_COOLDOWN = 120.0   # не здороваться с одним автором чаще, сек
+
+    def _greet(self, web: ZoomWeb, new_msgs: list[dict]) -> None:
+        """Поздороваться в ответ + помахать реакцией, если с ботом поздоровались.
+        Кулдаун на автора, чтобы не спамить. Мат/спам сюда не попадают —
+        приветствие проверяется отдельно."""
+        from app.moderation import is_greeting
+        if not getattr(self, "greet_enabled", True):
+            return
+        now = time.time()
+        for m in new_msgs:
+            sender, text = m.get("sender", ""), m.get("text", "")
+            if not is_greeting(text):
+                continue
+            if self.profanity.check(text):        # не здороваться на мат
+                continue
+            if now - self._greeted.get(sender, 0) < self.GREET_COOLDOWN:
+                continue
+            self._greeted[sender] = now
+            name = sender if sender and sender != "чат" else ""
+            hello = f"{name}, здравствуйте! 👋" if name else "Здравствуйте! 👋"
+            try:
+                web.send_chat(hello)
+                web.send_reaction("wave")
+                log.info("приветствие: %r → %s", sender, hello)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("приветствие не удалось: %s", exc)
 
     def _gatekeep(self, web: ZoomWeb, new_msgs: list[dict]) -> None:
         """Модерация зала ожидания: впуск по списку разрешённых (см. waitroom.py).

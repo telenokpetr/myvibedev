@@ -883,6 +883,7 @@ class ZoomWeb:
 
     def _enable_media_in_meeting(self) -> None:
         self.ensure_video_on()
+        self.ensure_mic_on()
         # Сразу снимаем зумовский шумодав: иначе звук ролика/музыки Zoom режет
         # как «шум» и слышно только речь. Рычаг — в Настройках, а НЕ в меню
         # тулбара (галочка там оказалась не тем переключателем).
@@ -891,6 +892,27 @@ class ZoomWeb:
             log.info("звуковой профиль при входе: %s", res)
         except Exception as exc:  # noqa: BLE001
             log.warning("звуковой профиль при входе не выставлен: %s", str(exc)[:100])
+
+    def ensure_mic_on(self) -> None:
+        """Включить микрофон бота, если замьючен — ИНАЧЕ звук бота (музыка/ролик)
+        не идёт в конференцию, участники ничего не слышат. Кнопка
+        «unmute my microphone» = сейчас ЗАМЬЮЧЕН → жмём."""
+        self._reveal_toolbar()
+        sel = ('button[aria-label*="unmute my microphone" i], '
+               'button[aria-label*="включить звук" i], '
+               'button[aria-label*="включить мой микрофон" i]')
+        try:
+            off = self.page.locator(sel)
+            if off.count() == 0:
+                return                      # уже включён (кнопка была бы «mute»)
+            try:
+                off.first.click(timeout=2000)
+            except Exception:               # noqa: BLE001
+                self.page.evaluate(
+                    "(s) => { const b = document.querySelector(s); if (b) b.click(); }", sel)
+            log.info("микрофон бота включён")
+        except Exception as exc:  # noqa: BLE001
+            log.warning("микрофон: не включить: %s", str(exc)[:100])
 
     def ensure_video_on(self) -> None:
         """Включить камеру, если выключена. Кнопка тумблера в тулбаре: когда
@@ -1049,6 +1071,43 @@ class ZoomWeb:
         p.mouse.click(box["x"], box["y"])
         p.wait_for_timeout(500)
         log.info("send_to_waiting: %r возвращён в зал", name)
+        return True
+
+    _REACTIONS = {
+        "wave": r"waving|wave|привет|помахать|рука|hand",
+        "like": r"thumbs.?up|like|нрав|палец вверх|👍",
+        "clap": r"clap|аплод|хлоп|👏",
+        "heart": r"heart|love|сердц|любов|❤",
+        "joy": r"joy|laugh|смех|ха-ха|😂",
+        "tada": r"tada|celebrat|праздн|🎉",
+    }
+
+    def send_reaction(self, kind: str = "clap") -> bool:
+        """Отправить реакцию Zoom (эмодзи из панели «React»). Реальные клики —
+        синтетику Zoom тут игнорирует. Тулбар предварительно «будим»."""
+        p = self.page
+        self._reveal_toolbar()
+        try:
+            p.get_by_role("button", name=re.compile(r"^react$|реакц", re.I)).first.click(timeout=3000)
+        except Exception:  # noqa: BLE001
+            box = p.evaluate(_JS_FIND_TEXT, r"^react$|^реакции?$")
+            if not box or box.get("none"):
+                log.info("reaction: кнопка React не найдена")
+                return False
+            p.mouse.click(box["x"], box["y"])
+        p.wait_for_timeout(900)
+        rx = self._REACTIONS.get(kind, self._REACTIONS["clap"])
+        box = p.evaluate(_JS_FIND_TEXT, rx)
+        if not box or box.get("none"):
+            # фолбэк: любой эмодзи-кнопки в панели по aria-label
+            box = p.evaluate(_JS_FIND_TEXT, r"clap|thumbs|heart|joy|tada|wave|реакц")
+        if not box or box.get("none"):
+            p.keyboard.press("Escape")
+            log.info("reaction: эмодзи %r не найден", kind)
+            return False
+        p.mouse.click(box["x"], box["y"])
+        p.wait_for_timeout(400)
+        log.info("reaction: отправлена %r", kind)
         return True
 
     def dismiss_popups(self) -> int:

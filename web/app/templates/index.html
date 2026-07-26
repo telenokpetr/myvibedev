@@ -262,6 +262,31 @@
 
     <section class="card">
       <div class="preview-head">
+        <h2>👋 Реакции и приветствия</h2>
+        <span class="pill" id="greet-state">—</span>
+      </div>
+      <p class="hint">Бот отправляет реакции в конференцию и здоровается в ответ, если
+         в чате с ним поздоровались (кулдаун, чтобы не спамить).</p>
+      <div class="control-row" id="reaction-row">
+        <span class="ctl-label">Реакция:</span>
+        <button data-react="clap">👏</button>
+        <button data-react="like">👍</button>
+        <button data-react="heart">❤️</button>
+        <button data-react="joy">😂</button>
+        <button data-react="tada">🎉</button>
+        <button data-react="wave">👋</button>
+        <span id="reaction-msg" class="msg"></span>
+      </div>
+      <div class="control-row">
+        <label class="switch">
+          <input type="checkbox" id="greet-enabled" checked>
+          <span>Здороваться в ответ на приветствие</span>
+        </label>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="preview-head">
         <h2>🚪 Зал ожидания (впуск по списку)</h2>
         <span class="pill" id="wr-state">—</span>
       </div>
@@ -381,6 +406,7 @@
   <script src="/static/music.js"></script>
   <script src="/static/video.js"></script>
   <script src="/static/waitroom.js"></script>
+  <script src="/static/reactions.js"></script>
   <script src="/static/collapse.js"></script>
   <script src="/static/account.js"></script>
 </body>
