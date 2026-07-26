@@ -9,6 +9,8 @@ from app.config import settings
 
 log = logging.getLogger("bot_client")
 BASE = settings.bot_worker_url.rstrip("/")
+# Общий секрет для служебных вызовов к bot-worker (порт 9000 закрыт без него).
+_HEADERS = {"X-Internal-Token": settings.internal_api_token}
 
 
 def join(event) -> str:
@@ -22,7 +24,7 @@ def join(event) -> str:
         "title": event.title,
     }
     try:
-        r = httpx.post(f"{BASE}/session/join", json=payload, timeout=30)
+        r = httpx.post(f"{BASE}/session/join", json=payload, headers=_HEADERS, timeout=30)
         if r.status_code == 409:
             return "busy"
         r.raise_for_status()
@@ -34,7 +36,7 @@ def join(event) -> str:
 
 def leave() -> bool:
     try:
-        httpx.post(f"{BASE}/session/leave", timeout=30).raise_for_status()
+        httpx.post(f"{BASE}/session/leave", headers=_HEADERS, timeout=30).raise_for_status()
         return True
     except Exception as exc:  # noqa: BLE001
         log.warning("leave failed: %s", exc)
@@ -43,14 +45,15 @@ def leave() -> bool:
 
 def status() -> dict | None:
     try:
-        return httpx.get(f"{BASE}/session/status", timeout=10).json()
+        return httpx.get(f"{BASE}/session/status", headers=_HEADERS, timeout=10).json()
     except Exception:  # noqa: BLE001
         return None
 
 
 def recording_start(target: str) -> dict | None:
     try:
-        r = httpx.post(f"{BASE}/recording/start", json={"target": target}, timeout=30)
+        r = httpx.post(f"{BASE}/recording/start", json={"target": target},
+                       headers=_HEADERS, timeout=30)
         r.raise_for_status()
         return r.json()
     except Exception as exc:  # noqa: BLE001
@@ -61,7 +64,7 @@ def recording_start(target: str) -> dict | None:
 def recording_action(action: str) -> dict | None:
     """action: pause | resume | stop."""
     try:
-        r = httpx.post(f"{BASE}/recording/{action}", timeout=30)
+        r = httpx.post(f"{BASE}/recording/{action}", headers=_HEADERS, timeout=30)
         r.raise_for_status()
         return r.json()
     except Exception as exc:  # noqa: BLE001
@@ -71,7 +74,7 @@ def recording_action(action: str) -> dict | None:
 
 def mute_all() -> dict | None:
     try:
-        r = httpx.post(f"{BASE}/moderation/mute-all", timeout=30)
+        r = httpx.post(f"{BASE}/moderation/mute-all", headers=_HEADERS, timeout=30)
         r.raise_for_status()
         return r.json()
     except Exception as exc:  # noqa: BLE001
@@ -82,7 +85,8 @@ def mute_all() -> dict | None:
 def moderation_test(sender: str, text: str) -> dict | None:
     try:
         r = httpx.post(f"{BASE}/moderation/test",
-                       json={"sender": sender, "text": text}, timeout=15)
+                       json={"sender": sender, "text": text},
+                       headers=_HEADERS, timeout=15)
         r.raise_for_status()
         return r.json()
     except Exception as exc:  # noqa: BLE001

@@ -1,10 +1,12 @@
+import hmac
 import os
 import subprocess
 import tempfile
 
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, Request, WebSocket
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
+from starlette.background import BackgroundTask
 
 from app import gui
 from app.chatreader import ChatMessage
@@ -15,6 +17,22 @@ from app.recording import recording
 from app.session import session
 
 app = FastAPI(title="Zoom Bot Worker", version="0.2.0")
+
+# Эндпоинты без аутентификации: health-check и WebSocket превью (последний
+# проксируется web-сервисом и не проходит через HTTP-middleware).
+_OPEN_PATHS = {"/health"}
+
+
+@app.middleware("http")
+async def require_internal_token(request: Request, call_next):
+    """Управляющий API bot-worker доступен только по общему секрету —
+    иначе любой в docker-сети мог бы командовать ботом (join/leave/record)."""
+    if request.url.path not in _OPEN_PATHS:
+        expected = config.internal_api_token
+        provided = request.headers.get("x-internal-token", "")
+        if not expected or not hmac.compare_digest(provided, expected):
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+    return await call_next(request)
 
 
 def _display_ok() -> bool:
@@ -126,13 +144,18 @@ def screenshot():
     """Снимок текущего экрана (что видит бот)."""
     if not _display_ok():
         return JSONResponse({"error": "display not ready"}, status_code=503)
-    path = tempfile.mktemp(suffix=".png")
+    # NamedTemporaryFile вместо небезопасного mktemp; файл удаляем после отдачи.
+    fd, path = tempfile.mkstemp(suffix=".png")
+    os.close(fd)
     subprocess.run(
         ["scrot", "-o", path],
         env={**os.environ, "DISPLAY": config.display},
         check=True, timeout=10,
     )
-    return FileResponse(path, media_type="image/png", filename="screen.png")
+    return FileResponse(
+        path, media_type="image/png", filename="screen.png",
+        background=BackgroundTask(os.remove, path),
+    )
 
 
 @app.websocket("/preview")

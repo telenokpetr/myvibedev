@@ -9,6 +9,8 @@ class Config:
     screenshots_dir: str = os.environ.get("SCREENSHOTS_DIR", "/data/screenshots")
     # Куда сообщать статус (web-сервис). Необязательно.
     callback_url: str = os.environ.get("WEB_CALLBACK_URL", "")
+    # Общий секрет для служебных вызовов web ↔ bot-worker.
+    internal_api_token: str = os.environ.get("INTERNAL_API_TOKEN", "")
 
     @property
     def width(self) -> int:

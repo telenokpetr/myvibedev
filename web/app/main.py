@@ -1,4 +1,5 @@
 import asyncio
+import hmac
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -101,7 +102,10 @@ def bot_moderation_test(payload: dict = Body(...)):
 @app.post("/api/internal/moderation")
 def internal_moderation(payload: dict = Body(...)):
     """Приём событий модерации от bot-worker (по внутреннему токену)."""
-    if payload.get("token") != settings.internal_api_token:
+    expected = settings.internal_api_token
+    provided = payload.get("token") or ""
+    # compare_digest — защита от timing-атак; пустой секрет закрываем наглухо.
+    if not expected or not hmac.compare_digest(provided, expected):
         return JSONResponse({"error": "forbidden"}, status_code=403)
     db = SessionLocal()
     try:
