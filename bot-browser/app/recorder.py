@@ -17,7 +17,7 @@ log = logging.getLogger("recorder")
 
 REC_DIR = os.environ.get("RECORDINGS_DIR", "/data/recordings")
 DISPLAY = os.environ.get("DISPLAY", ":99")
-GEOMETRY = os.environ.get("REC_GEOMETRY", "1280x800")
+GEOMETRY = os.environ.get("REC_GEOMETRY", "1280x720")   # экран Xvfb = 16:9
 
 
 class ScreenRecorder:

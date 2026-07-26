@@ -1218,7 +1218,7 @@ class ZoomWeb:
     def _reveal_toolbar(self) -> None:
         """Показать нижний тулбар Zoom — он прячется при простое (в Xvfb мышь
         не двигается), из-за чего кнопки панелей исчезают из DOM."""
-        for xy in ((640, 795), (400, 780), (640, 760)):
+        for xy in ((640, 710), (400, 700), (640, 685), (640, 660)):
             try:
                 self.page.mouse.move(*xy)
                 self.page.wait_for_timeout(150)
@@ -1580,7 +1580,7 @@ class ZoomWeb:
             except Exception:  # noqa: BLE001
                 pass
             # Тулбар Zoom прячется при простое — «шевелим» мышью, чтобы показать.
-            for xy in ((640, 795), (400, 780), (640, 760)):
+            for xy in ((640, 710), (400, 700), (640, 685), (640, 660)):
                 try:
                     p.mouse.move(*xy)
                     p.wait_for_timeout(200)
