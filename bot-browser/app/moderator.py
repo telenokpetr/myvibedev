@@ -235,6 +235,13 @@ class BrowserModerator:
                     if not web.in_meeting():
                         log.info("похоже, вышли из конференции")
                         break
+                    # Заодно гасим лишние уведомления Zoom (Понятно/баннеры).
+                    try:
+                        closed = web.dismiss_popups()
+                        if closed:
+                            log.info("закрыто уведомлений Zoom: %d", closed)
+                    except Exception:  # noqa: BLE001
+                        pass
                 ticks += 1
                 try:
                     self._poll(web)

@@ -55,6 +55,30 @@ _JS_FIND_TEXT = r"""
 }
 """
 
+# Закрыть лишние уведомления Zoom. Кнопки-подтверждения по тексту + крестики
+# инфо-баннеров. Явно НЕ трогаем чат/участников/митинг/выход, чтобы не сломать.
+_JS_DISMISS = r"""
+() => {
+  let n = 0;
+  const rx = /^(понятно|got it|later|позже|ok|хорошо|dismiss|не сейчас|no thanks|нет,? спасибо|принять и продолжить|продолжить без звука)$/i;
+  const keep = /chat|чат|участ|participant|meeting|конференц|panel|панел|leave|выйти|end|заверш|mute|звук|видео|video|share|подел|record|запис/i;
+  document.querySelectorAll('button,[role=button]').forEach(b => {
+    if (!b.offsetParent) return;
+    const t = (b.innerText || '').trim();
+    if (t && rx.test(t)) { try { b.click(); n++; } catch (e) {} }
+  });
+  document.querySelectorAll(
+    'button[aria-label*="close" i], button[aria-label*="закрыть" i], '
+    + 'button[aria-label*="dismiss" i], button[aria-label*="Не показывать" i]').forEach(b => {
+    if (!b.offsetParent) return;
+    const al = (b.getAttribute('aria-label') || '').toLowerCase();
+    if (keep.test(al)) return;               // не закрывать нужные панели
+    try { b.click(); n++; } catch (e) {}
+  });
+  return n;
+}
+"""
+
 # Координаты кнопки «Принять» в том тосте зала ожидания, где упомянут name.
 # Идём от кнопки вверх по предкам, ищем предка с текстом-именем.
 _JS_ADMIT_BTN = r"""
@@ -191,9 +215,20 @@ class ZoomWeb:
                 *vcam.launch_args(),    # живая виртуальная камера/микрофон (canvas)
                 "--disable-blink-features=AutomationControlled",
                 "--no-sandbox",
+                # На весь экран без хрома браузера (чище мониторинг): окно во весь
+                # Xvfb + старт в fullscreen + скрыть «Restore pages» и infobar'ы.
+                "--start-fullscreen",
+                "--start-maximized",
+                "--window-position=0,0",
+                "--window-size=1280,800",
+                "--disable-session-crashed-bubble",
+                "--disable-infobars",
+                "--hide-crash-restore-bubble",
             ],
+            # Убрать плашку «Chrome is being controlled by automated test software».
+            ignore_default_args=["--enable-automation"],
             permissions=["microphone", "camera"],
-            viewport={"width": 1280, "height": 800},
+            no_viewport=True,        # окно = весь экран, не фиксируем viewport
             locale="ru-RU",
             user_agent=self.UA,
         )
@@ -1010,6 +1045,15 @@ class ZoomWeb:
         log.info("send_to_waiting: %r возвращён в зал", name)
         return True
 
+    def dismiss_popups(self) -> int:
+        """Закрыть лишние всплывашки Zoom: «Понятно» (Продолжить беседу),
+        инфо-баннеры («Для улучшения качества…») по крестику, разные тосты.
+        НЕ трогает чат/участников/выход/митинг."""
+        try:
+            return int(self.page.evaluate(_JS_DISMISS))
+        except Exception:  # noqa: BLE001
+            return 0
+
     def read_chat(self) -> list[dict]:
         try:
             return self.page.evaluate(_JS_READ_CHAT)
@@ -1441,10 +1485,47 @@ class ZoomWeb:
         if not res.get("ok"):
             return {"ok": False, "step": "открыть настройки", **res}
         out = self.set_audio_profile()
+        # Пока диалог настроек открыт — заодно выключаем «Отразить моё видео»,
+        # иначе в самопросмотре/мониторинге (noVNC) текст на камере зеркальный.
+        # Другие участники и так видят его читаемым, но в мониторинге — наоборот.
+        try:
+            self._disable_mirror_in_open_settings()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("зеркало видео: не выключено: %s", str(exc)[:80])
         # Диалог обязательно закрыть: поверх него не работают чат и модерация.
         self.page.keyboard.press("Escape")
         self.page.wait_for_timeout(500)
         return out
+
+    def _disable_mirror_in_open_settings(self) -> None:
+        """В ОТКРЫТОМ диалоге настроек: вкладка «Видео» → снять «Отразить моё
+        видео», если стоит. Клик мышью по координатам (локаторы таймаутятся)."""
+        p = self.page
+        switched = False
+        for lbl in ("Видео", "Video"):
+            try:
+                p.get_by_role("tab", name=lbl, exact=True).first.click(timeout=2500)
+                switched = True
+                break
+            except Exception:  # noqa: BLE001
+                continue
+        if not switched:
+            box = p.evaluate(_JS_FIND_TEXT, r"^видео$|^video$")
+            if box and not box.get("none"):
+                p.mouse.click(box["x"], box["y"])
+        p.wait_for_timeout(1200)
+        # Точное имя настройки в веб-клиенте — «Отобразить мое видео зеркально».
+        rx = "отобразить мо[её] видео зеркально|mirror my video"
+        checked = p.evaluate(_JS_CHECKED, rx)
+        if not checked:
+            log.info("зеркало видео: уже выключено или пункта нет (checked=%s)", checked)
+            return
+        box = p.evaluate(_JS_FIND_TEXT, rx)
+        if box and not box.get("none"):
+            p.mouse.click(box["x"], box["y"])
+            p.wait_for_timeout(500)
+            still = p.evaluate(_JS_CHECKED, rx)
+            log.info("зеркало видео выключено (было вкл, теперь checked=%s)", still)
 
     # ---- виртуальная камера (живой поток с canvas, см. vcam.py) ----
 
