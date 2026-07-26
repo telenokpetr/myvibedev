@@ -19,8 +19,15 @@ for i in $(seq 1 30); do
   sleep 0.2
 done
 
-# PulseAudio для fake-микрофона музыкального браузера (пока не используется).
+# PulseAudio + null-sink «botout»: Chromium выводит туда звук КОНФЕРЕНЦИИ
+# (других участников), а ffmpeg снимает botout.monitor для прослушивания в
+# мониторинге. Поднять ДО браузера, чтобы Chromium выбрал этот sink по умолчанию.
+# (root даёт предупреждение, но работает.)
 pulseaudio --start --exit-idle-time=-1 >/tmp/pulse.log 2>&1 || true
+for i in $(seq 1 20); do pactl info >/dev/null 2>&1 && break; sleep 0.3; done
+pactl load-module module-null-sink sink_name=botout \
+      sink_properties=device.description=botout >/dev/null 2>&1 || true
+pactl set-default-sink botout >/dev/null 2>&1 || true
 
 # Экран браузера бота наружу через noVNC (для РУЧНОГО входа в Zoom-аккаунт):
 # x11vnc отдаёт дисплей :99, websockify заворачивает его в веб на :6080.

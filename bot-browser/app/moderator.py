@@ -58,6 +58,7 @@ class BrowserModerator:
         self._cmd_results: dict[str, bool] = {}
         self.recording = False
         self.auth_error = ""                 # почему cookie не подошли
+        self.audio_level = 0                 # уровень звука бота (0..100) для VU
         # Очередь удаления: одно удаление за ТАКТ цикла (не пачкой) — пачка
         # гонялась с DOM и флейкала. text → число неудачных попыток.
         self._del_queue: dict[str, int] = {}
@@ -243,6 +244,12 @@ class BrowserModerator:
                     except Exception:  # noqa: BLE001
                         pass
                 ticks += 1
+                # Уровень звука бота читаем ЗДЕСЬ (в потоке-владельце), кэшируем —
+                # чтобы VU-эндпоинт не дёргал очередь команд (та таймаутила).
+                try:
+                    self.audio_level = web.vcam_level()
+                except Exception:  # noqa: BLE001
+                    self.audio_level = 0
                 try:
                     self._poll(web)
                 except Exception as exc:  # noqa: BLE001

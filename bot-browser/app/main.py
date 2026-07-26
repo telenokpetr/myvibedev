@@ -365,10 +365,10 @@ def video_status():
 
 @app.get("/audio/bot-level")
 def audio_bot_level():
-    """Уровень звука, который ОТДАЁТ бот (музыка/ролик), 0..100 — для VU."""
-    if not moderator.enabled:
-        return {"level": 0, "in_meeting": False}
-    return {"level": int(moderator.call("vcam_level") or 0), "in_meeting": True}
+    """Уровень звука, который ОТДАЁТ бот (музыка/ролик), 0..100 — для VU.
+    Значение кэширует цикл модератора (без дёрганья очереди команд)."""
+    lvl = moderator.audio_level if isinstance(moderator.audio_level, (int, float)) else 0
+    return {"level": int(lvl), "in_meeting": bool(moderator.enabled)}
 
 
 def _pulse_monitor() -> str:
