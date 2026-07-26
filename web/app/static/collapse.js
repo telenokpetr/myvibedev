@@ -23,7 +23,6 @@
     btn.title = "Свернуть / развернуть блок";
     btn.addEventListener("click", () => setCollapsed(card, !card.classList.contains("collapsed")));
     card.appendChild(btn);                      // последним ребёнком (absolute)
-    setCollapsed(card, true);                   // по умолчанию свёрнуто (кроме мониторинга)
   });
 
   // Общая кнопка над карточками.
@@ -31,8 +30,8 @@
   if (main) {
     const all = document.createElement("button");
     all.id = "collapse-all";
-    all.textContent = "▾ Развернуть всё";   // стартуем свёрнутыми
-    let collapsed = true;
+    all.textContent = "▸ Свернуть всё кроме мониторинга";
+    let collapsed = false;
     all.addEventListener("click", () => {
       collapsed = !collapsed;
       cards.forEach((c) => { if (!isMonitor(c)) setCollapsed(c, collapsed); });
