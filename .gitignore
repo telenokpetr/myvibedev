@@ -25,3 +25,8 @@ screenshots/
 
 # Cookie-сессия Zoom для входа бота — СЕКРЕТ, не коммитить
 zoom-cookies.json
+
+
+zoom-cookies*.json
+.env
+shot.png
