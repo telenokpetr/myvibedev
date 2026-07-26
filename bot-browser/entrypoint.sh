@@ -13,7 +13,7 @@ rm -f /tmp/.X99-lock /tmp/.X11-unix/X99 2>/dev/null || true
 rm -f /data/zoomprofile/SingletonLock /data/zoomprofile/SingletonCookie \
       /data/zoomprofile/SingletonSocket 2>/dev/null || true
 
-Xvfb :99 -screen 0 1280x800x24 -nolisten tcp >/tmp/xvfb.log 2>&1 &
+Xvfb :99 -screen 0 1280x720x24 -nolisten tcp >/tmp/xvfb.log 2>&1 &
 for i in $(seq 1 30); do
   xdpyinfo -display :99 >/dev/null 2>&1 && break
   sleep 0.2

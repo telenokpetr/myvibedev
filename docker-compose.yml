@@ -121,7 +121,7 @@ services:
       BROWSER_CHANNEL: ""
       SHOTS_DIR: "/data"
       RECORDINGS_DIR: "/data/recordings"
-      REC_GEOMETRY: "1280x800"
+      REC_GEOMETRY: "1280x720"
     ports:
       - "9100:9100"   # управляющий API браузерного бота
       # noVNC — экран браузера бота для РУЧНОГО входа в Zoom-аккаунт.
@@ -159,7 +159,7 @@ services:
       BROWSER_CHANNEL: ""
       SHOTS_DIR: "/data"
       RECORDINGS_DIR: "/data/recordings"
-      REC_GEOMETRY: "1280x800"
+      REC_GEOMETRY: "1280x720"
     ports:
       - "9101:9100"   # API второго бота (внутри контейнера порт тот же 9100)
       - "127.0.0.1:6081:6080"   # noVNC второго бота — экран для ручного входа

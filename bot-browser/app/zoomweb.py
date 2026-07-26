@@ -67,13 +67,19 @@ _JS_DISMISS = r"""
     const t = (b.innerText || '').trim();
     if (t && rx.test(t)) { try { b.click(); n++; } catch (e) {} }
   });
+  // Крестики: aria-label может быть и на самой кнопке, и на ВНУТРЕННЕЙ иконке
+  // (<i aria-label="Close"> у баннера «Для улучшения качества…»). Берём любой
+  // элемент с close/закрыть и жмём ближайшую кнопку.
   document.querySelectorAll(
-    'button[aria-label*="close" i], button[aria-label*="закрыть" i], '
-    + 'button[aria-label*="dismiss" i], button[aria-label*="Не показывать" i]').forEach(b => {
-    if (!b.offsetParent) return;
-    const al = (b.getAttribute('aria-label') || '').toLowerCase();
-    if (keep.test(al)) return;               // не закрывать нужные панели
-    try { b.click(); n++; } catch (e) {}
+    '[aria-label*="close" i], [aria-label*="закрыть" i], [aria-label*="dismiss" i]').forEach(e => {
+    if (!e.offsetParent) return;
+    const al = (e.getAttribute('aria-label') || '').toLowerCase();
+    if (keep.test(al)) return;
+    const btn = e.closest('button,[role=button]') || e;
+    const ctx = ((btn.className || '').toString() + ' '
+                 + (btn.getAttribute('aria-label') || '')).toLowerCase();
+    if (keep.test(ctx)) return;              // не закрывать нужные панели
+    try { btn.click(); n++; } catch (e2) {}
   });
   return n;
 }
@@ -220,7 +226,7 @@ class ZoomWeb:
                 "--start-fullscreen",
                 "--start-maximized",
                 "--window-position=0,0",
-                "--window-size=1280,800",
+                "--window-size=1280,720",
                 "--disable-session-crashed-bubble",
                 "--disable-infobars",
                 "--hide-crash-restore-bubble",
