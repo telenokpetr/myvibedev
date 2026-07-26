@@ -38,11 +38,15 @@ _LEET = str.maketrans({
 })
 
 
+def _strip(text: str) -> str:
+    """Нижний регистр + удаление разделителей между буквами ("х-у-й", "п и з д а")."""
+    return re.sub(r"[\s\.\-_*]+", "", text.lower())
+
+
 def normalize(text: str) -> str:
-    t = text.lower().translate(_LEET)
-    # убираем разделители между буквами: "х-у-й", "п и з д а"
-    t = re.sub(r"[\s\.\-_*]+", "", t)
-    return t
+    """Каноничная форма для матчинга обфускации: убираем разделители и применяем
+    leet-замены (цифры/латиница → кириллица), чтобы ловить "п1зда", "xyй"."""
+    return _strip(text).translate(_LEET)
 
 
 class ProfanityFilter:
@@ -51,7 +55,11 @@ class ProfanityFilter:
         self._re = re.compile("|".join(roots))
 
     def check(self, text: str) -> bool:
-        return bool(self._re.search(normalize(text)))
+        # Проверяем обе формы: leet-нормализация ловит обфускацию кириллицы, но
+        # ломает родные латинские слова (fuck → fuсk с кириллической «с»), поэтому
+        # исходную (без leet) форму проверяем тоже.
+        stripped = _strip(text)
+        return bool(self._re.search(stripped) or self._re.search(stripped.translate(_LEET)))
 
 
 class SpamDetector:

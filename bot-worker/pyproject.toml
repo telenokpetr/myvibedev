@@ -1,0 +1,5 @@
+[tool.pytest.ini_options]
+# Тесты запускаются из каталога bot-worker; пакет `app` лежит рядом.
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-ra"

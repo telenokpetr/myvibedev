@@ -46,6 +46,20 @@ docker compose up --build
 - Веб-интерфейс: <http://localhost:8000>
 - Health: <http://localhost:8000/health>
 
+## Тесты
+
+Юнит-тесты обоих сервисов работают офлайн (без Docker/Xvfb/Postgres):
+
+```bash
+# bot-worker: движок модерации + разбор Zoom-ссылок
+cd bot-worker && pip install -r requirements-dev.txt && pytest
+
+# web: CRUD мероприятий на SQLite in-memory
+cd web && pip install -r requirements-dev.txt && pytest
+```
+
+CI (GitHub Actions, `.github/workflows/ci.yml`) гоняет оба набора на каждый push/PR.
+
 ## Требования
 
 - Docker + Docker Compose
