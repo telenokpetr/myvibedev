@@ -1104,12 +1104,15 @@ class ZoomWeb:
     # Подписи эмодзи ищем в aria-label/title (EN+RU) — там, где у Zoom-web живут
     # названия реакций. Списки расширяются по дампу панели в логах (см. ниже).
     _REACTIONS = {
-        "wave": r"wav|hand|привет|помах|рука|ладон",
+        # wave — «Waving Hand»/«Помахать рукой», НО не «Raise/Поднять руку»
+        # (поэтому без голого hand/рука).
+        "wave": r"wav|помах|привет|👋",
         "like": r"thumbs.?up|\blike\b|big.?thumb|нрав|палец вверх|большой палец|👍",
-        "clap": r"clap|applaus|аплод|хлоп|ладош|👏",
+        # clap — «Аплодисменты»; без «хлоп», иначе цепляет «Хлопушку» (tada).
+        "clap": r"clap|applaus|аплод|👏",
         "heart": r"heart|love|сердц|любов|❤",
-        "joy": r"joy|laugh|smil|смех|смеш|ха-?ха|😂",
-        "tada": r"tada|celebrat|party|праздн|салют|конфетти|🎉",
+        "joy": r"joy|laugh|smil|смех|смеш|ха-?ха|радост|слёз|слез|😂",
+        "tada": r"tada|celebrat|party|popper|праздн|салют|конфетти|хлопушк|🎉",
     }
     # Кнопка открытия панели реакций в тулбаре.
     _RX_REACT_BTN = r"^reactions?$|^react$|^реакции?$|реакц"
